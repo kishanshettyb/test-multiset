@@ -115,7 +115,7 @@ export default function NavigatePage() {
             confidenceCheck: true,
             confidenceThreshold: 0.5,
 
-            referenceSpaceType: 'local-floor',
+            referenceSpaceType: 'local',
 
             onSessionStart: () => {
               console.log('MultiSet AR session started')
