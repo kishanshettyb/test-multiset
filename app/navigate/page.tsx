@@ -156,8 +156,24 @@ export default function NavigatePage() {
 
             onError: (error) => {
               console.error('MultiSet session error:', error)
-              setStatus('MultiSet error — check browser console.')
+
+              let message = 'Unknown MultiSet error'
+
+              if (error instanceof Error) {
+                message = `${error.name}: ${error.message}`
+              } else if (typeof error === 'string') {
+                message = error
+              } else {
+                try {
+                  message = JSON.stringify(error, null, 2)
+                } catch {
+                  message = String(error)
+                }
+              }
+
+              setStatus(`MultiSet ERROR: ${message}`)
             },
+
           }
         )
 
