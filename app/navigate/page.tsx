@@ -41,9 +41,9 @@ export default function NavigatePage() {
           return
         }
 
-        const clientId = process.env.MULTISET_CLIENT_ID
-        const clientSecret = process.env.MULTISET_CLIENT_SECRET
-        const mapCode = process.env.MULTISET_MAP_CODE
+        const clientId = process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID
+        const clientSecret = process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET
+        const mapCode = process.env.NEXT_PUBLIC_MULTISET_MAP_CODE
 
         if (!clientId || !clientSecret || !mapCode) {
           setStatus('MultiSet environment variables are missing.')
