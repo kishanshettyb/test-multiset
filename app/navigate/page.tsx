@@ -9,21 +9,20 @@ import {
 import { ThreeAdapter } from '@multisetai/vps/three'
 
 export default function NavigatePage() {
-  const containerRef = useRef<HTMLDivElement>(null)
+  const containerRef =
+    useRef<HTMLDivElement>(null)
 
   const rendererRef =
     useRef<THREE.WebGLRenderer | null>(null)
 
-  const sceneRef =
-    useRef<THREE.Scene | null>(null)
-
-  const cameraRef =
-    useRef<THREE.PerspectiveCamera | null>(null)
-
   const adapterRef =
     useRef<ThreeAdapter | null>(null)
 
-  const [status, setStatus] = useState('Initializing...')
+  const [status, setStatus] =
+    useState('Initializing...')
+
+  const [errorDetails, setErrorDetails] =
+    useState<string | null>(null)
 
   const [confidence, setConfidence] =
     useState<number | null>(null)
@@ -35,21 +34,29 @@ export default function NavigatePage() {
       z: number
     } | null>(null)
 
-  const [errorDetails, setErrorDetails] =
-    useState<string | null>(null)
-
   const showError = (error: unknown) => {
-    console.error('MultiSet error:', error)
+    console.error(
+      'MultiSet error:',
+      error
+    )
 
     let message = 'Unknown error'
 
     if (error instanceof Error) {
-      message = `${error.name}: ${error.message}`
-    } else if (typeof error === 'string') {
+      message =
+        `${error.name}: ${error.message}`
+    } else if (
+      typeof error === 'string'
+    ) {
       message = error
     } else {
       try {
-        message = JSON.stringify(error, null, 2)
+        message =
+          JSON.stringify(
+            error,
+            null,
+            2
+          )
       } catch {
         message = String(error)
       }
@@ -60,7 +67,7 @@ export default function NavigatePage() {
   }
 
   useEffect(() => {
-    let mounted = true
+    let disposed = false
 
     const initialize = async () => {
       try {
@@ -68,37 +75,38 @@ export default function NavigatePage() {
           return
         }
 
-        setStatus('Checking AR support...')
-        setErrorDetails(null)
+        setStatus(
+          'Checking AR support...'
+        )
 
         /*
-         * Check WebXR support
+         * Check WebXR
          */
         const supported =
-          await ThreeAdapter.isSupported()
+          await XRSessionManager.isSupported()
 
         if (!supported) {
           setStatus(
-            'Immersive AR is not supported. Use an ARCore-compatible Android device with Chrome.'
+            'Immersive AR is not supported on this device/browser.'
           )
 
           return
         }
 
         /*
-         * MultiSet credentials
-         *
-         * These must currently be NEXT_PUBLIC_ variables
-         * because this page runs in the browser.
+         * Environment variables
          */
         const clientId =
-          process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID
+          process.env
+            .NEXT_PUBLIC_MULTISET_CLIENT_ID
 
         const clientSecret =
-          process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET
+          process.env
+            .NEXT_PUBLIC_MULTISET_CLIENT_SECRET
 
         const mapCode =
-          process.env.NEXT_PUBLIC_MULTISET_MAP_CODE
+          process.env
+            .NEXT_PUBLIC_MULTISET_MAP_CODE
 
         if (
           !clientId ||
@@ -112,49 +120,39 @@ export default function NavigatePage() {
           return
         }
 
-        console.log(
-          'MultiSet configuration:',
-          {
-            clientIdPresent: !!clientId,
-            clientSecretPresent: !!clientSecret,
-            mapCodePresent: !!mapCode,
-          }
+        /*
+         * MultiSet client
+         */
+        setStatus(
+          'Authorizing MultiSet...'
         )
 
-        /*
-         * Create MultiSet client
-         */
-        setStatus('Authorizing MultiSet...')
-
-        const client = new MultisetClient({
-          clientId,
-          clientSecret,
-          mapType: 'map',
-          code: mapCode,
-        })
+        const client =
+          new MultisetClient({
+            clientId,
+            clientSecret,
+            mapType: 'map',
+            code: mapCode,
+          })
 
         await client.authorize()
 
-        if (!mounted) {
+        if (disposed) {
           return
         }
 
-        console.log(
-          'MultiSet authorization successful'
-        )
-
         /*
-         * Create Three.js renderer
+         * THREE renderer
+         *
+         * IMPORTANT:
+         * Do not call renderer.setAnimationLoop().
+         * ThreeAdapter manages the XR render loop.
          */
-        setStatus('Creating AR session...')
-
         const renderer =
           new THREE.WebGLRenderer({
             antialias: true,
             alpha: true,
           })
-
-        renderer.xr.enabled = true
 
         renderer.setPixelRatio(
           Math.min(
@@ -168,7 +166,28 @@ export default function NavigatePage() {
           window.innerHeight
         )
 
-        rendererRef.current = renderer
+        renderer.xr.enabled = true
+
+        rendererRef.current =
+          renderer
+
+        renderer.domElement.style.position =
+          'absolute'
+
+        renderer.domElement.style.left =
+          '0'
+
+        renderer.domElement.style.top =
+          '0'
+
+        renderer.domElement.style.width =
+          '100%'
+
+        renderer.domElement.style.height =
+          '100%'
+
+        renderer.domElement.style.display =
+          'block'
 
         containerRef.current.appendChild(
           renderer.domElement
@@ -177,11 +196,15 @@ export default function NavigatePage() {
         /*
          * Scene
          */
-        const scene = new THREE.Scene()
+        const scene =
+          new THREE.Scene()
 
+        /*
+         * Transparent scene.
+         *
+         * WebXR supplies the camera passthrough.
+         */
         scene.background = null
-
-        sceneRef.current = scene
 
         /*
          * Camera
@@ -195,23 +218,18 @@ export default function NavigatePage() {
             100
           )
 
-        cameraRef.current = camera
-
-        scene.add(camera)
-
         /*
-         * Basic lighting
+         * Small ambient light.
          */
-        const light =
+        scene.add(
           new THREE.AmbientLight(
             0xffffff,
             1
           )
-
-        scene.add(light)
+        )
 
         /*
-         * Create MultiSet XR session
+         * XR session manager
          */
         const session =
           new XRSessionManager(
@@ -220,27 +238,25 @@ export default function NavigatePage() {
               client,
 
               /*
-               * Automatically attempt localization
-               * when the AR session starts.
+               * Start VPS localization
+               * automatically after AR starts.
                */
               autoLocalize: true,
 
               /*
-               * Only accept localization results
-               * above this confidence.
+               * Use local because your
+               * device rejected local-floor.
                */
-              confidenceCheck: true,
-              confidenceThreshold: 0.5,
+              referenceSpaceType:
+                'local',
 
-              /*
-               * local works on the device where
-               * local-floor was not supported.
-               */
-              referenceSpaceType: 'local',
+              confidenceCheck: true,
+
+              confidenceThreshold: 0.5,
 
               onSessionStart: () => {
                 console.log(
-                  'MultiSet AR session started'
+                  'XR SESSION STARTED'
                 )
 
                 setErrorDetails(null)
@@ -252,7 +268,7 @@ export default function NavigatePage() {
 
               onSessionEnd: () => {
                 console.log(
-                  'MultiSet AR session ended'
+                  'XR SESSION ENDED'
                 )
 
                 setStatus(
@@ -260,23 +276,27 @@ export default function NavigatePage() {
                 )
               },
 
-              onLocalizationResult: (
-                result
-              ) => {
+              onLocalizationInit: () => {
                 console.log(
-                  'MultiSet localization result:',
-                  result
+                  'VPS localization started'
                 )
 
-                try {
+                setStatus(
+                  'Scanning environment...'
+                )
+              },
+
+              onLocalizationResult:
+                (result) => {
+                  console.log(
+                    'VPS localization result:',
+                    result
+                  )
+
                   const data =
                     result.localizeData
 
                   if (!data) {
-                    setStatus(
-                      'Localization returned no pose.'
-                    )
-
                     return
                   }
 
@@ -293,32 +313,62 @@ export default function NavigatePage() {
                   setStatus(
                     '✓ VPS LOCALIZED'
                   )
-                } catch (error) {
-                  showError(error)
-                }
-              },
+                },
 
-              onLocalizationFailure: (
-                reason
-              ) => {
-                console.warn(
-                  'MultiSet localization failed:',
-                  reason
-                )
+              onLocalizationFailure:
+                (reason) => {
+                  console.warn(
+                    'VPS localization failed:',
+                    reason
+                  )
 
-                setStatus(
-                  'Scanning... Move the phone slowly and point at the mapped area.'
-                )
-              },
+                  setStatus(
+                    'Scanning... Move the phone slowly and point at the mapped area.'
+                  )
+                },
+
+              onFrameCaptured:
+                (frame) => {
+                  console.log(
+                    'VPS frame captured',
+                    frame
+                  )
+                },
+
+              onCameraIntrinsics:
+                (intrinsics) => {
+                  console.log(
+                    'Camera intrinsics:',
+                    intrinsics
+                  )
+                },
 
               onError: (error) => {
                 showError(error)
+              },
+
+              onContextLost: () => {
+                setStatus(
+                  'WebGL context lost.'
+                )
+              },
+
+              onContextRestored: () => {
+                setStatus(
+                  'WebGL context restored.'
+                )
               },
             }
           )
 
         /*
          * ThreeAdapter
+         *
+         * This class owns:
+         * - XR render target
+         * - XR frame loop
+         * - XR camera matrices
+         * - Three.js rendering
          */
         const adapter =
           new ThreeAdapter({
@@ -328,44 +378,60 @@ export default function NavigatePage() {
             camera,
 
             /*
-             * We use our own Start button.
+             * We use our own button.
              */
             useDefaultButton: false,
 
             /*
-             * Show MultiSet map mesh
-             * when available.
+             * Don't load mesh during
+             * initial VPS test.
              */
-            showMesh: true,
+            showMesh: false,
 
             /*
-             * Show map origin.
+             * Don't show gizmo during
+             * initial VPS test.
              */
-            showGizmo: true,
+            showGizmo: false,
 
-            onLocalizationSuccess: (
-              result,
-              worldFromMap
-            ) => {
-              console.log(
-                'LOCALIZATION SUCCESS:',
-                result
-              )
+            onXRFrame: () => {
+              /*
+               * ThreeAdapter handles
+               * the actual XR camera.
+               */
+            },
 
-              console.log(
-                'worldFromMap:',
+            onLocalizationSuccess:
+              (
+                result,
                 worldFromMap
-              )
+              ) => {
+                console.log(
+                  '======================'
+                )
 
-              try {
+                console.log(
+                  'VPS LOCALIZATION SUCCESS'
+                )
+
+                console.log(
+                  'Result:',
+                  result
+                )
+
+                console.log(
+                  'World From Map:',
+                  worldFromMap
+                )
+
+                console.log(
+                  '======================'
+                )
+
                 const data =
                   result.localizeData
 
                 if (!data) {
-                  setStatus(
-                    'Localization succeeded but no pose was returned.'
-                  )
-
                   return
                 }
 
@@ -384,33 +450,24 @@ export default function NavigatePage() {
                 setStatus(
                   '✓ VPS LOCALIZED'
                 )
-              } catch (error) {
-                showError(error)
-              }
-            },
+              },
           })
 
         /*
-         * Initialize adapter
+         * Initialize adapter.
+         *
+         * MultiSet starts its preview/render
+         * handling here.
          */
         adapter.initialize()
 
-        adapterRef.current = adapter
+        adapterRef.current =
+          adapter
 
         /*
-         * Window resize
+         * Resize
          */
         const handleResize = () => {
-          if (!renderer || !camera) {
-            return
-          }
-
-          camera.aspect =
-            window.innerWidth /
-            window.innerHeight
-
-          camera.updateProjectionMatrix()
-
           renderer.setSize(
             window.innerWidth,
             window.innerHeight
@@ -422,14 +479,12 @@ export default function NavigatePage() {
           handleResize
         )
 
-        if (mounted) {
-          setStatus(
-            'Ready — tap Start Indoor Navigation'
-          )
-        }
+        setStatus(
+          'Ready — tap Start Indoor Navigation'
+        )
 
         /*
-         * Cleanup for initialization
+         * Cleanup
          */
         return () => {
           window.removeEventListener(
@@ -439,21 +494,11 @@ export default function NavigatePage() {
 
           try {
             adapter.dispose()
-          } catch (error) {
-            console.warn(
-              'Adapter cleanup error:',
-              error
-            )
-          }
+          } catch {}
 
           try {
             renderer.dispose()
-          } catch (error) {
-            console.warn(
-              'Renderer cleanup error:',
-              error
-            )
-          }
+          } catch {}
 
           if (
             renderer.domElement
@@ -463,11 +508,6 @@ export default function NavigatePage() {
           }
         }
       } catch (error) {
-        console.error(
-          'MultiSet initialization error:',
-          error
-        )
-
         showError(error)
       }
     }
@@ -475,17 +515,12 @@ export default function NavigatePage() {
     initialize()
 
     return () => {
-      mounted = false
+      disposed = true
 
       if (adapterRef.current) {
         try {
           adapterRef.current.dispose()
-        } catch (error) {
-          console.warn(
-            'Adapter dispose error:',
-            error
-          )
-        }
+        } catch {}
 
         adapterRef.current = null
       }
@@ -493,19 +528,16 @@ export default function NavigatePage() {
       if (rendererRef.current) {
         try {
           rendererRef.current.dispose()
-        } catch (error) {
-          console.warn(
-            'Renderer dispose error:',
-            error
-          )
-        }
+        } catch {}
 
         if (
           rendererRef.current
             .domElement
             .parentElement
         ) {
-          rendererRef.current.domElement.remove()
+          rendererRef.current
+            .domElement
+            .remove()
         }
 
         rendererRef.current = null
@@ -516,8 +548,8 @@ export default function NavigatePage() {
   /*
    * Start AR
    *
-   * This must be called directly from
-   * the user's tap/click.
+   * MUST be called directly
+   * from the user tap.
    */
   const startAR = async () => {
     const adapter =
@@ -541,7 +573,7 @@ export default function NavigatePage() {
       await adapter.startSession()
 
       console.log(
-        'AR session requested successfully'
+        'adapter.startSession() completed'
       )
     } catch (error) {
       showError(error)
@@ -551,18 +583,18 @@ export default function NavigatePage() {
   return (
     <main className="fixed inset-0 overflow-hidden bg-black text-white">
 
-      {/* Three.js / AR canvas */}
+      {/* AR / Three.js canvas */}
       <div
         ref={containerRef}
         className="absolute inset-0"
       />
 
-      {/* Status panel */}
-      <div className="absolute left-0 right-0 top-0 z-20 p-4">
+      {/* Status */}
+      <div className="absolute left-0 right-0 top-0 z-50 p-4">
 
         <div className="rounded-xl bg-black/70 p-4 backdrop-blur">
 
-          <div className="text-sm font-medium">
+          <div className="text-sm font-semibold">
             Indoor Navigation
           </div>
 
@@ -586,9 +618,9 @@ export default function NavigatePage() {
             </div>
           )}
 
-          {/* Mobile error display */}
           {errorDetails && (
-            <div className="mt-3 max-h-64 overflow-auto rounded-lg bg-red-950 p-3">
+            <div className="mt-3 max-h-60 overflow-auto rounded-lg bg-red-950 p-3">
+
               <div className="mb-1 text-xs font-semibold text-red-300">
                 ERROR DETAILS
               </div>
@@ -596,6 +628,7 @@ export default function NavigatePage() {
               <pre className="whitespace-pre-wrap break-words text-xs text-red-200">
                 {errorDetails}
               </pre>
+
             </div>
           )}
 
@@ -603,8 +636,8 @@ export default function NavigatePage() {
 
       </div>
 
-      {/* Start button */}
-      <div className="absolute bottom-8 left-0 right-0 z-20 flex justify-center">
+      {/* Start */}
+      <div className="absolute bottom-8 left-0 right-0 z-50 flex justify-center">
 
         <button
           type="button"
