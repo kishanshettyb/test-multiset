@@ -43,7 +43,7 @@ export function DestinationDrawer({
 
   return (
     <Drawer>
-      <DrawerTrigger>
+      <DrawerTrigger >
         <Button
           disabled={disabled}
           className="h-12 rounded-2xl bg-white px-5 text-black shadow-xl hover:bg-white/90"
