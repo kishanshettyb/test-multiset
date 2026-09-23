@@ -55,10 +55,11 @@ const destinations: Destination[] = [
   {
     id: 'cabin-1',
     name: 'Cabin 1',
+    // X: 4.433  Y: -2.167  Z: 1.104
     position: new THREE.Vector3(
-      3.415,
+      4.433,
       -2.196,
-      1.390
+      1.104
     ),
   },
 
