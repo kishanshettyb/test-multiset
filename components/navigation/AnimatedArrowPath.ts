@@ -1,724 +1,561 @@
 import * as THREE from 'three'
 
-
-// ============================================================
-// OPTIONS
-// ============================================================
-
 export interface ArrowPathOptions {
-
   color?: number
-
   arrowCount?: number
-
   spacing?: number
-
   groundY?: number
 
-  arrowHeight?: number
+  // Distance between the two side lines
+  pathWidth?: number
 
-  arrowScale?: number
+  // Arrow size
+  arrowWidth?: number
+  arrowLength?: number
 
+  // Animation
+  animationSpeed?: number
+  animationDistance?: number
 }
 
-
-// ============================================================
-// ANIMATED ARROW PATH
-// ============================================================
-
 export class AnimatedArrowPath {
-
   public group: THREE.Group
-
 
   private arrows: THREE.Group[] = []
 
-  private clock =
-    new THREE.Clock()
+  private arrowMaterials: THREE.MeshBasicMaterial[] = []
 
+  private clock = new THREE.Clock()
+
+  private pathLineLeft: THREE.Line | null = null
+  private pathLineRight: THREE.Line | null = null
 
   private color: number
-
   private arrowCount: number
-
   private spacing: number
-
   private groundY: number
 
-  private arrowHeight: number
+  private pathWidth: number
+  private arrowWidth: number
+  private arrowLength: number
 
-  private arrowScale: number
+  private animationSpeed: number
+  private animationDistance: number
 
+  constructor(options: ArrowPathOptions = {}) {
+    this.group = new THREE.Group()
 
-  // ==========================================================
-  // CONSTRUCTOR
-  // ==========================================================
+    this.color = options.color ?? 0x8b7cff
 
-  constructor(
-    options: ArrowPathOptions = {}
-  ) {
+    this.arrowCount = options.arrowCount ?? 12
 
-    this.group =
-      new THREE.Group()
+    this.spacing = options.spacing ?? 0.7
 
+    this.groundY = options.groundY ?? 0
 
-    this.color =
-      options.color ??
-      0x7c3aed
+    this.pathWidth = options.pathWidth ?? 0.9
 
+    this.arrowWidth = options.arrowWidth ?? 0.42
 
-    this.arrowCount =
-      options.arrowCount ??
-      18
+    this.arrowLength = options.arrowLength ?? 0.55
 
+    this.animationSpeed = options.animationSpeed ?? 0.8
 
-    this.spacing =
-      options.spacing ??
-      0.65
-
-
-    this.groundY =
-      options.groundY ??
-      0
-
-
-    this.arrowHeight =
-      options.arrowHeight ??
-      0.025
-
-
-    this.arrowScale =
-      options.arrowScale ??
-      0.55
-
+    this.animationDistance =
+      options.animationDistance ?? 0.18
 
     this.createArrows()
   }
 
-
-  // ==========================================================
-  // CREATE ALL ARROWS
-  // ==========================================================
-
+  /**
+   * Create the animated arrow sequence.
+   */
   private createArrows() {
-
-    for (
-      let index = 0;
-      index < this.arrowCount;
-      index++
-    ) {
-
-      const arrow =
-        this.createArrow()
-
-
-      /*
-       * Arrow path runs in LOCAL +Z.
-       *
-       * The first arrow is close to
-       * the user.
-       */
+    for (let i = 0; i < this.arrowCount; i++) {
+      const arrow = this.createArrow()
 
       arrow.position.set(
         0,
         0,
-        index * this.spacing
+        i * this.spacing
       )
 
+      this.group.add(arrow)
 
-      arrow.scale.setScalar(
-        this.arrowScale
-      )
-
-
-      this.group.add(
-        arrow
-      )
-
-
-      this.arrows.push(
-        arrow
-      )
+      this.arrows.push(arrow)
     }
   }
 
+  /**
+   * Creates a flat chevron directly in X/Z.
+   *
+   * IMPORTANT:
+   * +Z = destination direction.
+   *
+   * This avoids the ShapeGeometry rotation
+   * problem that was reversing your arrows.
+   */
+  private createArrow(): THREE.Group {
+    const group = new THREE.Group()
 
-  // ==========================================================
-  // CREATE ONE ARROW
-  // ==========================================================
+    const w = this.arrowWidth
+    const l = this.arrowLength
 
-  private createArrow():
-    THREE.Group {
+    const geometry = new THREE.BufferGeometry()
 
-    const group =
-      new THREE.Group()
-
-
-    // ========================================================
-    // MAIN ARROW SHAPE
-    // ========================================================
-
-    const shape =
-      new THREE.Shape()
-
-
-    /*
-     * IMPORTANT
+    /**
+     * Chevron shape.
      *
-     * Shape initially exists in XY.
+     *               +Z
+     *                ^
      *
-     * The point is toward +Y.
+     *              tip
+     *               /\
+     *              /  \
+     *             /    \
+     *            /      \
      *
-     * After rotation onto the floor,
-     * the point becomes +Z.
+     *       <-- back of arrow -->
+     *
+     * Sharp point is +Z.
      */
 
-    shape.moveTo(
-      -0.16,
-      0
-    )
-
-    shape.lineTo(
-      0.16,
-      0
-    )
-
-
-    // Arrow body
-
-    shape.lineTo(
-      0.16,
-      0.50
-    )
-
-
-    // Arrow head left/right
-
-    shape.lineTo(
-      0.38,
-      0.50
-    )
-
-
-    // SHARP POINT
-
-    shape.lineTo(
+    const vertices = new Float32Array([
+      // left wing
+      -w,
       0,
-      0.98
+      0,
+
+      // tip
+      0,
+      0,
+      l,
+
+      // right wing
+      w,
+      0,
+      0,
+
+      // inner left
+      -w * 0.48,
+      0,
+      0,
+
+      // inner tip
+      0,
+      0,
+      l * 0.58,
+
+      // inner right
+      w * 0.48,
+      0,
+      0,
+    ])
+
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(vertices, 3)
     )
 
+    geometry.setIndex([
+      0,
+      1,
+      3,
 
-    shape.lineTo(
-      -0.38,
-      0.50
-    )
+      3,
+      1,
+      4,
 
+      3,
+      4,
+      5,
 
-    shape.lineTo(
-      -0.16,
-      0.50
-    )
+      5,
+      4,
+      2,
 
+      2,
+      4,
+      1,
+    ])
 
-    shape.closePath()
-
-
-    // ========================================================
-    // MAIN ARROW
-    // ========================================================
-
-    const geometry =
-      new THREE.ShapeGeometry(
-        shape
-      )
-
+    geometry.computeVertexNormals()
 
     const material =
       new THREE.MeshBasicMaterial({
-        color:
-          this.color,
+        color: this.color,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
 
-        transparent:
-          true,
+        /**
+         * Prevent the arrow from writing depth
+         * and causing ugly floor conflicts.
+         */
+        depthWrite: false,
 
-        opacity:
-          0.95,
-
-        side:
-          THREE.DoubleSide,
-
-        depthWrite:
-          false,
-
-        depthTest:
-          true,
+        depthTest: true,
       })
 
+    const mesh = new THREE.Mesh(
+      geometry,
+      material
+    )
 
-    const mesh =
-      new THREE.Mesh(
-        geometry,
-        material
-      )
-
-
-    /*
-     * Shape is XY.
-     *
-     * Rotate it onto XZ floor.
-     *
+    /**
      * IMPORTANT:
      *
-     * +Y from the shape becomes +Z.
+     * The arrow is already created in X/Z.
      *
-     * Therefore the sharp point
-     * faces +Z.
+     * Therefore:
+     *
+     * X = horizontal
+     * Y = height
+     * Z = navigation direction
+     *
+     * NO rotation.x is required.
      */
 
-    mesh.rotation.x =
-      Math.PI / 2
+    mesh.position.y = 0.025
 
+    group.add(mesh)
 
-    /*
-     * VERY small Y offset.
-     *
-     * This prevents z-fighting.
-     *
-     * It does NOT make the arrow
-     * visibly float.
-     */
-
-    mesh.position.y =
-      this.arrowHeight
-
-
-    group.add(
-      mesh
-    )
-
-
-    // ========================================================
-    // DOUBLE BORDER
-    // ========================================================
-
-    const borderMaterial =
-      new THREE.LineBasicMaterial({
-
-        color:
-          0xffffff,
-
-        transparent:
-          true,
-
-        opacity:
-          0.65,
-
-        depthWrite:
-          false,
-      })
-
-
-    // --------------------------------------------------------
-    // OUTER BORDER
-    // --------------------------------------------------------
-
-    const outerPoints =
-      this.createArrowOutline(
-        1.12
-      )
-
-
-    const outerGeometry =
-      new THREE.BufferGeometry().setFromPoints(
-        outerPoints
-      )
-
-
-    const outerBorder =
-      new THREE.LineLoop(
-        outerGeometry,
-        borderMaterial.clone()
-      )
-
-
-    outerBorder.rotation.x =
-      Math.PI / 2
-
-
-    outerBorder.position.y =
-      this.arrowHeight +
-      0.004
-
-
-    group.add(
-      outerBorder
-    )
-
-
-    // --------------------------------------------------------
-    // INNER BORDER
-    // --------------------------------------------------------
-
-    const innerPoints =
-      this.createArrowOutline(
-        0.96
-      )
-
-
-    const innerGeometry =
-      new THREE.BufferGeometry().setFromPoints(
-        innerPoints
-      )
-
-
-    const innerBorder =
-      new THREE.LineLoop(
-        innerGeometry,
-        borderMaterial.clone()
-      )
-
-
-    innerBorder.rotation.x =
-      Math.PI / 2
-
-
-    innerBorder.position.y =
-      this.arrowHeight +
-      0.006
-
-
-    group.add(
-      innerBorder
-    )
-
+    this.arrowMaterials.push(material)
 
     return group
   }
 
-
-  // ==========================================================
-  // CREATE ARROW OUTLINE
-  // ==========================================================
-
-  private createArrowOutline(
-    scale: number
-  ): THREE.Vector3[] {
-
-    /*
-     * Outline is created in XY.
-     *
-     * It is then rotated onto floor.
-     */
-
-    return [
-
-      new THREE.Vector3(
-        -0.16 * scale,
-        0,
-        0
-      ),
-
-      new THREE.Vector3(
-        0.16 * scale,
-        0,
-        0
-      ),
-
-      new THREE.Vector3(
-        0.16 * scale,
-        0,
-        0.50 * scale
-      ),
-
-      new THREE.Vector3(
-        0.38 * scale,
-        0,
-        0.50 * scale
-      ),
-
-      // SHARP POINT
-
-      new THREE.Vector3(
-        0,
-        0,
-        0.98 * scale
-      ),
-
-      new THREE.Vector3(
-        -0.38 * scale,
-        0,
-        0.50 * scale
-      ),
-
-      new THREE.Vector3(
-        -0.16 * scale,
-        0,
-        0.50 * scale
-      ),
-    ]
-  }
-
-
-  // ==========================================================
-  // SET PATH
-  // ==========================================================
-
+  /**
+   * Set the complete navigation path.
+   *
+   * start = user's current map position
+   * end   = selected destination
+   */
   public setPath(
     start: THREE.Vector3,
     end: THREE.Vector3
   ) {
-
     const direction =
       new THREE.Vector3()
-
 
     direction.subVectors(
       end,
       start
     )
 
-
-    /*
-     * Ignore vertical difference.
+    /**
+     * Indoor walking happens on X/Z.
      *
-     * Indoor navigation happens
-     * on the floor.
+     * Ignore vertical difference.
      */
-
     direction.y = 0
-
 
     if (
       direction.lengthSq() <
       0.000001
     ) {
-
       return
     }
 
-
     direction.normalize()
 
-
-    /*
-     * Our arrow points toward
-     * LOCAL +Z.
-     *
-     * Rotate +Z toward destination.
+    /**
+     * Position path exactly at user's
+     * current ground position.
      */
-
-    const angle =
-      Math.atan2(
-        direction.x,
-        direction.z
-      )
-
-
-    /*
-     * Position arrow path
-     * at current user location.
-     */
-
     this.group.position.set(
       start.x,
       this.groundY,
       start.z
     )
 
-
-    /*
-     * Rotate path toward destination.
+    /**
+     * +Z of our arrow geometry must point
+     * toward destination.
+     *
+     * atan2(X, Z) gives exactly that.
      */
+    this.group.rotation.y =
+      Math.atan2(
+        direction.x,
+        direction.z
+      )
 
-    this.group.rotation.set(
-      0,
-      angle,
-      0
+    /**
+     * Build side boundary lines.
+     */
+    this.createSideLines()
+  }
+
+  /**
+   * Creates the two thin navigation rails
+   * visible in your reference video.
+   */
+  private createSideLines() {
+    /**
+     * Remove old lines.
+     */
+    if (this.pathLineLeft) {
+      this.group.remove(
+        this.pathLineLeft
+      )
+
+      this.pathLineLeft.geometry.dispose()
+
+      ;(
+        this.pathLineLeft
+          .material as THREE.Material
+      ).dispose()
+    }
+
+    if (this.pathLineRight) {
+      this.group.remove(
+        this.pathLineRight
+      )
+
+      this.pathLineRight.geometry.dispose()
+
+      ;(
+        this.pathLineRight
+          .material as THREE.Material
+      ).dispose()
+    }
+
+    /**
+     * Path length.
+     */
+    const pathLength =
+      Math.max(
+        5,
+        this.arrowCount *
+          this.spacing +
+          0.8
+      )
+
+    /**
+     * Left and right X coordinates.
+     */
+    const halfWidth =
+      this.pathWidth / 2
+
+    /**
+     * LEFT LINE
+     */
+    const leftPoints = [
+      new THREE.Vector3(
+        -halfWidth,
+        0.018,
+        0
+      ),
+
+      new THREE.Vector3(
+        -halfWidth,
+        0.018,
+        pathLength
+      ),
+    ]
+
+    /**
+     * RIGHT LINE
+     */
+    const rightPoints = [
+      new THREE.Vector3(
+        halfWidth,
+        0.018,
+        0
+      ),
+
+      new THREE.Vector3(
+        halfWidth,
+        0.018,
+        pathLength
+      ),
+    ]
+
+    this.pathLineLeft =
+      this.createLine(leftPoints)
+
+    this.pathLineRight =
+      this.createLine(rightPoints)
+
+    this.group.add(
+      this.pathLineLeft
+    )
+
+    this.group.add(
+      this.pathLineRight
     )
   }
 
+  /**
+   * Create one thin path line.
+   */
+  private createLine(
+    points: THREE.Vector3[]
+  ) {
+    const geometry =
+      new THREE.BufferGeometry().setFromPoints(
+        points
+      )
 
-  // ==========================================================
-  // SET GROUND LEVEL
-  // ==========================================================
+    const material =
+      new THREE.LineBasicMaterial({
+        color: this.color,
 
+        transparent: true,
+
+        opacity: 0.65,
+      })
+
+    const line =
+      new THREE.Line(
+        geometry,
+        material
+      )
+
+    return line
+  }
+
+  /**
+   * Update animation every XR frame.
+   */
+  public update() {
+    const elapsed =
+      this.clock.getElapsedTime()
+
+    this.arrows.forEach(
+      (arrow, index) => {
+        /**
+         * Create a travelling wave.
+         *
+         * Each arrow gets a slightly different
+         * animation phase.
+         */
+        const progress =
+          (
+            elapsed *
+              this.animationSpeed +
+            index * 0.18
+          ) % 1
+
+        /**
+         * Animate arrows slightly toward
+         * destination (+Z).
+         */
+        const baseZ =
+          index * this.spacing
+
+        arrow.position.z =
+          baseZ +
+          progress *
+            this.animationDistance
+
+        /**
+         * Fade animation.
+         */
+        const material =
+          this.arrowMaterials[index]
+
+        material.opacity =
+          0.35 +
+          (1 - progress) * 0.55
+
+        /**
+         * Very subtle scale animation.
+         */
+        const scale =
+          0.92 +
+          Math.sin(
+            progress * Math.PI
+          ) *
+            0.12
+
+        arrow.scale.set(
+          scale,
+          scale,
+          scale
+        )
+
+        /**
+         * IMPORTANT:
+         *
+         * Never change Y.
+         *
+         * This keeps the arrow on the floor.
+         */
+        arrow.position.y = 0
+      }
+    )
+  }
+
+  /**
+   * Change floor height.
+   */
   public setGroundY(
     groundY: number
   ) {
-
-    this.groundY =
-      groundY
-
+    this.groundY = groundY
 
     this.group.position.y =
       groundY
   }
 
-
-  // ==========================================================
-  // SHOW
-  // ==========================================================
-
-  public show() {
-
+  /**
+   * Hide/show path.
+   */
+  public setVisible(
+    visible: boolean
+  ) {
     this.group.visible =
-      true
+      visible
   }
 
-
-  // ==========================================================
-  // HIDE
-  // ==========================================================
-
-  public hide() {
-
-    this.group.visible =
-      false
-  }
-
-
-  // ==========================================================
-  // UPDATE ANIMATION
-  // ==========================================================
-
-  public update() {
-
-    const elapsed =
-      this.clock.getElapsedTime()
-
-
+  /**
+   * Clean everything.
+   */
+  public dispose() {
     this.arrows.forEach(
-      (
-        arrow,
-        index
-      ) => {
-
-        /*
-         * Flow animation.
-         */
-
-        const progress =
-          (
-            elapsed * 0.9 +
-            index * 0.12
-          ) % 1
-
-
-        /*
-         * Fade.
-         */
-
+      arrow => {
         const mesh =
           arrow.children[0] as THREE.Mesh
 
-
         if (mesh) {
+          mesh.geometry.dispose()
 
-          const material =
-            mesh.material as
-              THREE.MeshBasicMaterial
-
-
-          material.opacity =
-            0.25 +
-            0.70 *
-              (
-                1 -
-                progress
-              )
+          ;(
+            mesh.material as THREE.Material
+          ).dispose()
         }
-
-
-        /*
-         * Move arrows forward.
-         *
-         * +Z = destination direction.
-         */
-
-        arrow.position.z =
-          index *
-            this.spacing -
-          progress *
-            0.28
-
-
-        /*
-         * IMPORTANT:
-         *
-         * Never animate Y.
-         *
-         * This keeps arrows
-         * on the ground.
-         */
-
-        arrow.position.y =
-          0
       }
     )
-  }
-
-
-  // ==========================================================
-  // DISPOSE
-  // ==========================================================
-
-  public dispose() {
-
-    this.arrows.forEach(
-      arrow => {
-
-        arrow.traverse(
-          object => {
-
-            if (
-              !(
-                object instanceof
-                THREE.Mesh
-              ) &&
-              !(
-                object instanceof
-                THREE.Line
-              )
-            ) {
-              return
-            }
-
-
-            object.geometry.dispose()
-
-
-            const material =
-              object.material
-
-
-            if (
-              Array.isArray(
-                material
-              )
-            ) {
-
-              material.forEach(
-                item =>
-                  item.dispose()
-              )
-
-            } else {
-
-              material.dispose()
-            }
-          }
-        )
-      }
-    )
-
 
     this.arrows = []
 
+    this.arrowMaterials = []
 
-    if (
-      this.group.parent
-    ) {
+    if (this.pathLineLeft) {
+      this.pathLineLeft.geometry.dispose()
 
+      ;(
+        this.pathLineLeft
+          .material as THREE.Material
+      ).dispose()
+    }
+
+    if (this.pathLineRight) {
+      this.pathLineRight.geometry.dispose()
+
+      ;(
+        this.pathLineRight
+          .material as THREE.Material
+      ).dispose()
+    }
+
+    this.pathLineLeft = null
+
+    this.pathLineRight = null
+
+    if (this.group.parent) {
       this.group.parent.remove(
         this.group
       )
