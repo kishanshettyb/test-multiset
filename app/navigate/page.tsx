@@ -1518,7 +1518,7 @@ export default function NavigatePage() {
       <div
         className="
           fixed
-          bottom-6
+          bottom-16
           left-0
           right-0
           z-30
