@@ -17,15 +17,11 @@ import {
 import {
   ThreeAdapter,
 } from '@multisetai/vps/three'
-
-import {
-  DestinationDrawer,
-  type DestinationItem,
-} from '@/components/navigation/DestinationDrawer'
-
+ 
 import {
   AnimatedArrowPath,
 } from '@/components/navigation/AnimatedArrowPath'
+import { DestinationDrawer, DestinationItem } from '@/components/navigation/destination-drawer'
 
 
 // ============================================================
@@ -42,11 +38,9 @@ type Destination = DestinationItem & {
 // ============================================================
 
 const destinations: Destination[] = [
-
   {
     id: 'cabin-1',
     name: 'Cabin 1',
-
     position: new THREE.Vector3(
       3.415,
       -2.196,
@@ -57,7 +51,6 @@ const destinations: Destination[] = [
   {
     id: 'cabin-2',
     name: 'Cabin 2',
-
     position: new THREE.Vector3(
       9.726,
       -2.138,
@@ -68,7 +61,6 @@ const destinations: Destination[] = [
   {
     id: 'meeting-room',
     name: 'Meeting Room',
-
     position: new THREE.Vector3(
       11.947,
       -2.185,
@@ -79,7 +71,6 @@ const destinations: Destination[] = [
   {
     id: 'lobby',
     name: 'Lobby',
-
     position: new THREE.Vector3(
       1.282,
       -1.214,
@@ -90,7 +81,6 @@ const destinations: Destination[] = [
   {
     id: 'panetry',
     name: 'Panetry',
-
     position: new THREE.Vector3(
       0.955,
       -1.226,
@@ -101,7 +91,6 @@ const destinations: Destination[] = [
   {
     id: 'restroom',
     name: 'Restroom',
-
     position: new THREE.Vector3(
       -0.895,
       -1.498,
@@ -112,25 +101,21 @@ const destinations: Destination[] = [
   {
     id: 'entrance',
     name: 'Entrance Door',
-
     position: new THREE.Vector3(
       -0.058,
       -2.210,
       1.260
     ),
   },
-
 ]
 
 
 // ============================================================
-// CONSTANTS
+// NAVIGATION SETTINGS
 // ============================================================
 
+// Distance in meters at which destination is considered reached.
 const ARRIVAL_DISTANCE = 0.8
-
-const DEFAULT_GROUND_Y = -2.20
-
 
 // ============================================================
 // PAGE
@@ -158,7 +143,7 @@ export default function NavigatePage() {
 
 
   // ==========================================================
-  // THREE
+  // THREE.JS
   // ==========================================================
 
   const rendererRef =
@@ -183,6 +168,12 @@ export default function NavigatePage() {
 
   const destinationRef =
     useRef<Destination | null>(null)
+
+  // Important:
+  // Keep reached state in a ref as well.
+  // This prevents stale React state inside MultiSet callbacks.
+  const destinationReachedRef =
+    useRef(false)
 
 
   // ==========================================================
@@ -223,6 +214,36 @@ export default function NavigatePage() {
 
 
   // ==========================================================
+  // DISTANCE CALCULATION
+  // ==========================================================
+
+  const calculateDistance = useCallback(
+    (
+      from: THREE.Vector3,
+      to: THREE.Vector3
+    ) => {
+
+      // Indoor navigation should normally
+      // calculate distance on X/Z floor plane.
+      //
+      // We intentionally ignore Y.
+
+      const dx =
+        to.x - from.x
+
+      const dz =
+        to.z - from.z
+
+      return Math.sqrt(
+        dx * dx +
+        dz * dz
+      )
+    },
+    []
+  )
+
+
+  // ==========================================================
   // DESTINATION SELECT
   // ==========================================================
 
@@ -240,57 +261,71 @@ export default function NavigatePage() {
         }
 
 
-        // Save selected destination.
-
+        // Save destination.
         destinationRef.current =
           destination
 
 
+        // Reset arrival state.
+        destinationReachedRef.current =
+          false
+
+        setDestinationReached(false)
+
+
+        // Save selected destination.
         setSelectedId(id)
 
-        setDestinationReached(
-          false
-        )
 
-
-        // Current localized position.
-
+        // Get latest localized position.
         const current =
           currentPositionRef.current
 
 
-        if (
-          !current
-        ) {
+        // User has not localized yet.
+        if (!current) {
 
           setStatus(
             `Selected ${destination.name}. Start AR to begin navigation.`
           )
 
           return
-
         }
 
 
-        // Start arrow path.
+        // ------------------------------------------------------
+        // GROUND LEVEL
+        // ------------------------------------------------------
 
-        arrowPathRef.current?.setPath(
+        // Use current localized Y as floor level.
+        //
+        // This prevents the arrows from being placed
+        // at an old hard-coded floor height.
 
-          current,
-
-          destination.position
-
+        arrowPathRef.current?.setGroundY(
+          current.y
         )
 
 
-        // Calculate distance.
+        // ------------------------------------------------------
+        // CREATE ARROW PATH
+        // ------------------------------------------------------
+
+        arrowPathRef.current?.setPath(
+          current,
+          destination.position
+        )
+
+
+        // ------------------------------------------------------
+        // DISTANCE
+        // ------------------------------------------------------
 
         const distanceValue =
           calculateDistance(
             current,
             destination.position
           )
-
 
         setDistance(
           distanceValue
@@ -300,33 +335,11 @@ export default function NavigatePage() {
         setStatus(
           `Navigating to ${destination.name}`
         )
-
       },
-      []
+      [
+        calculateDistance,
+      ]
     )
-
-
-  // ==========================================================
-  // DISTANCE
-  // ==========================================================
-
-  function calculateDistance(
-    from: THREE.Vector3,
-    to: THREE.Vector3
-  ) {
-
-    const dx =
-      to.x - from.x
-
-    const dz =
-      to.z - from.z
-
-    return Math.sqrt(
-      dx * dx +
-      dz * dz
-    )
-
-  }
 
 
   // ==========================================================
@@ -342,9 +355,9 @@ export default function NavigatePage() {
 
       try {
 
-        // ----------------------------------------------------
-        // CHECK WEBXR
-        // ----------------------------------------------------
+        // ======================================================
+        // WEBXR
+        // ======================================================
 
         setStatus(
           'Checking WebXR...'
@@ -360,13 +373,12 @@ export default function NavigatePage() {
           throw new Error(
             'WebXR is not supported on this device/browser.'
           )
-
         }
 
 
-        // ----------------------------------------------------
-        // ENVIRONMENT
-        // ----------------------------------------------------
+        // ======================================================
+        // ENVIRONMENT VARIABLES
+        // ======================================================
 
         const clientId =
           process.env
@@ -390,13 +402,12 @@ export default function NavigatePage() {
           throw new Error(
             'Missing MultiSet environment variables.'
           )
-
         }
 
 
-        // ----------------------------------------------------
-        // MULTISET
-        // ----------------------------------------------------
+        // ======================================================
+        // MULTISET CLIENT
+        // ======================================================
 
         setStatus(
           'Connecting to MultiSet...'
@@ -405,15 +416,10 @@ export default function NavigatePage() {
 
         const client =
           new MultisetClient({
-
             clientId,
-
             clientSecret,
-
             mapType: 'map',
-
             code: mapCode,
-
           })
 
 
@@ -425,9 +431,9 @@ export default function NavigatePage() {
         }
 
 
-        // ----------------------------------------------------
-        // THREE RENDERER
-        // ----------------------------------------------------
+        // ======================================================
+        // THREE.JS RENDERER
+        // ======================================================
 
         setStatus(
           'Creating AR renderer...'
@@ -436,11 +442,8 @@ export default function NavigatePage() {
 
         const renderer =
           new THREE.WebGLRenderer({
-
             antialias: true,
-
             alpha: true,
-
           })
 
 
@@ -492,9 +495,9 @@ export default function NavigatePage() {
         )
 
 
-        // ----------------------------------------------------
+        // ======================================================
         // SCENE
-        // ----------------------------------------------------
+        // ======================================================
 
         const scene =
           new THREE.Scene()
@@ -504,22 +507,17 @@ export default function NavigatePage() {
           scene
 
 
-        // ----------------------------------------------------
+        // ======================================================
         // CAMERA
-        // ----------------------------------------------------
+        // ======================================================
 
         const camera =
           new THREE.PerspectiveCamera(
-
             70,
-
             window.innerWidth /
               window.innerHeight,
-
             0.01,
-
             1000
-
           )
 
 
@@ -527,28 +525,36 @@ export default function NavigatePage() {
           camera
 
 
-        // ----------------------------------------------------
+        // ======================================================
         // ARROW PATH
-        // ----------------------------------------------------
+        // ======================================================
 
         const arrowPath =
           new AnimatedArrowPath({
 
-            color: 0x7c3aed,
+            color:
+              0x7c3aed,
 
-            arrowCount: 18,
+            arrowCount:
+              18,
 
-            spacing: 0.65,
+            spacing:
+              0.65,
+
+            // Temporary initial value.
+            //
+            // Once localization happens,
+            // this gets replaced with the actual
+            // localized floor Y.
 
             groundY:
-              DEFAULT_GROUND_Y,
+              -2.20,
 
             arrowHeight:
               0.025,
 
             arrowScale:
               0.55,
-
           })
 
 
@@ -561,9 +567,9 @@ export default function NavigatePage() {
           arrowPath
 
 
-        // ----------------------------------------------------
+        // ======================================================
         // XR SESSION
-        // ----------------------------------------------------
+        // ======================================================
 
         setStatus(
           'Creating MultiSet XR session...'
@@ -573,14 +579,19 @@ export default function NavigatePage() {
         const session =
           new XRSessionManager(
 
-            renderer.getContext()
-              as WebGL2RenderingContext,
+            // IMPORTANT:
+            // Do not pass WebGL2RenderingContext
+            // as a separate constructor argument.
+            //
+            // The renderer context itself is passed here.
+
+            renderer.getContext() as WebGL2RenderingContext,
 
             {
-
               client,
 
-              autoLocalize: true,
+              autoLocalize:
+                true,
 
               referenceSpaceType:
                 'local',
@@ -592,63 +603,60 @@ export default function NavigatePage() {
                 0.5,
 
 
-              // --------------------------------------------
+              // ================================================
               // SESSION START
-              // --------------------------------------------
+              // ================================================
 
-              onSessionStart: () => {
+              onSessionStart:
+                () => {
 
-                console.log(
-                  'XR SESSION STARTED'
-                )
+                  console.log(
+                    'XR SESSION STARTED'
+                  )
+
+                  setStatus(
+                    'Scanning...'
+                  )
+                },
 
 
-                setStatus(
-                  'Scanning...'
-                )
-
-              },
-
-
-              // --------------------------------------------
+              // ================================================
               // SESSION END
-              // --------------------------------------------
+              // ================================================
 
-              onSessionEnd: () => {
+              onSessionEnd:
+                () => {
 
-                console.log(
-                  'XR SESSION ENDED'
-                )
+                  console.log(
+                    'XR SESSION ENDED'
+                  )
 
-
-                setStatus(
-                  'AR session ended'
-                )
-
-              },
-
-
-              // --------------------------------------------
-              // LOCALIZATION INIT
-              // --------------------------------------------
-
-              onLocalizationInit: () => {
-
-                console.log(
-                  'Localization started'
-                )
+                  setStatus(
+                    'AR session ended'
+                  )
+                },
 
 
-                setStatus(
-                  'Scanning... Move the phone slowly and point at the mapped area.'
-                )
+              // ================================================
+              // LOCALIZATION START
+              // ================================================
 
-              },
+              onLocalizationInit:
+                () => {
+
+                  console.log(
+                    'Localization started'
+                  )
+
+                  setStatus(
+                    'Scanning... Move the phone slowly and point at the mapped area.'
+                  )
+                },
 
 
-              // --------------------------------------------
+              // ================================================
               // LOCALIZATION RESULT
-              // --------------------------------------------
+              // ================================================
 
               onLocalizationResult:
                 (result: any) => {
@@ -666,21 +674,19 @@ export default function NavigatePage() {
                   if (
                     !data?.position
                   ) {
-
                     return
-
                   }
 
 
+                  // ----------------------------------------------
+                  // CURRENT MAP POSITION
+                  // ----------------------------------------------
+
                   const position =
                     new THREE.Vector3(
-
                       data.position.x,
-
                       data.position.y,
-
                       data.position.z
-
                     )
 
 
@@ -688,34 +694,39 @@ export default function NavigatePage() {
                     position
 
 
-                  // ----------------------------------------
-                  // Destination
-                  // ----------------------------------------
+                  // ----------------------------------------------
+                  // DESTINATION
+                  // ----------------------------------------------
 
                   const destination =
                     destinationRef.current
 
 
-                  if (
-                    !destination
-                  ) {
-
+                  if (!destination) {
                     return
-
                   }
 
 
-                  // ----------------------------------------
-                  // Calculate remaining distance
-                  // ----------------------------------------
+                  // ----------------------------------------------
+                  // GROUND LEVEL
+                  // ----------------------------------------------
+
+                  // Keep arrows at the user's current
+                  // localized floor height.
+
+                  arrowPathRef.current?.setGroundY(
+                    position.y
+                  )
+
+
+                  // ----------------------------------------------
+                  // DISTANCE
+                  // ----------------------------------------------
 
                   const remaining =
                     calculateDistance(
-
                       position,
-
                       destination.position
-
                     )
 
 
@@ -724,18 +735,25 @@ export default function NavigatePage() {
                   )
 
 
-                  // ----------------------------------------
-                  // Destination reached
-                  // ----------------------------------------
+                  // ----------------------------------------------
+                  // DESTINATION REACHED
+                  // ----------------------------------------------
 
                   if (
                     remaining <=
                     ARRIVAL_DISTANCE
                   ) {
 
+                    // Ref prevents the callback from
+                    // repeatedly firing the completion state.
+
                     if (
-                      !destinationReached
+                      !destinationReachedRef.current
                     ) {
+
+                      destinationReachedRef.current =
+                        true
+
 
                       setDestinationReached(
                         true
@@ -746,37 +764,54 @@ export default function NavigatePage() {
                         `✓ You reached ${destination.name}`
                       )
 
+
+                      // Remove arrows after arrival.
+                      arrowPathRef.current?.hide()
                     }
 
 
                     return
-
                   }
 
 
-                  // ----------------------------------------
-                  // Update arrows
-                  // ----------------------------------------
+                  // ----------------------------------------------
+                  // USER MOVED AWAY AGAIN
+                  // ----------------------------------------------
+
+                  if (
+                    destinationReachedRef.current
+                  ) {
+
+                    destinationReachedRef.current =
+                      false
+
+                    setDestinationReached(
+                      false
+                    )
+
+                    arrowPathRef.current?.show()
+                  }
+
+
+                  // ----------------------------------------------
+                  // UPDATE ARROW PATH
+                  // ----------------------------------------------
 
                   arrowPathRef.current?.setPath(
-
                     position,
-
                     destination.position
-
                   )
 
 
                   setStatus(
                     `Navigating to ${destination.name}`
                   )
-
                 },
 
 
-              // --------------------------------------------
+              // ================================================
               // LOCALIZATION FAILURE
-              // --------------------------------------------
+              // ================================================
 
               onLocalizationFailure:
                 (reason: any) => {
@@ -790,13 +825,12 @@ export default function NavigatePage() {
                   setStatus(
                     'Scanning... Move the phone slowly and point at the mapped area.'
                   )
-
                 },
 
 
-              // --------------------------------------------
-              // ERROR
-              // --------------------------------------------
+              // ================================================
+              // MULTISET ERROR
+              // ================================================
 
               onError:
                 (err: any) => {
@@ -821,11 +855,8 @@ export default function NavigatePage() {
                   setStatus(
                     'MultiSet error'
                   )
-
                 },
-
             }
-
           )
 
 
@@ -833,9 +864,9 @@ export default function NavigatePage() {
           session
 
 
-        // ----------------------------------------------------
+        // ======================================================
         // THREE ADAPTER
-        // ----------------------------------------------------
+        // ======================================================
 
         const adapter =
           new ThreeAdapter({
@@ -858,9 +889,9 @@ export default function NavigatePage() {
               true,
 
 
-            // --------------------------------------------
+            // ================================================
             // LOCALIZATION SUCCESS
-            // --------------------------------------------
+            // ================================================
 
             onLocalizationSuccess:
               (
@@ -872,10 +903,12 @@ export default function NavigatePage() {
                   'LOCALIZATION SUCCESS'
                 )
 
+
                 console.log(
                   'Result:',
                   result
                 )
+
 
                 console.log(
                   'World From Map:',
@@ -900,21 +933,15 @@ export default function NavigatePage() {
                 if (
                   !data?.position
                 ) {
-
                   return
-
                 }
 
 
                 const position =
                   new THREE.Vector3(
-
                     data.position.x,
-
                     data.position.y,
-
                     data.position.z
-
                   )
 
 
@@ -922,58 +949,105 @@ export default function NavigatePage() {
                   position
 
 
-                // ------------------------------------------
-                // If destination already selected
-                // ------------------------------------------
+                // ----------------------------------------------
+                // Update floor level immediately
+                // ----------------------------------------------
+
+                arrowPathRef.current?.setGroundY(
+                  position.y
+                )
+
+
+                // ----------------------------------------------
+                // Existing destination
+                // ----------------------------------------------
 
                 const destination =
                   destinationRef.current
 
 
-                if (
-                  destination
-                ) {
-
-                  arrowPathRef.current?.setPath(
-
-                    position,
-
-                    destination.position
-
-                  )
-
-
-                  const remaining =
-                    calculateDistance(
-
-                      position,
-
-                      destination.position
-
-                    )
-
-
-                  setDistance(
-                    remaining
-                  )
-
+                if (!destination) {
+                  return
                 }
 
+
+                const remaining =
+                  calculateDistance(
+                    position,
+                    destination.position
+                  )
+
+
+                setDistance(
+                  remaining
+                )
+
+
+                // ----------------------------------------------
+                // Already reached
+                // ----------------------------------------------
+
+                if (
+                  remaining <=
+                  ARRIVAL_DISTANCE
+                ) {
+
+                  destinationReachedRef.current =
+                    true
+
+                  setDestinationReached(
+                    true
+                  )
+
+                  arrowPathRef.current?.hide()
+
+                  setStatus(
+                    `✓ You reached ${destination.name}`
+                  )
+
+                  return
+                }
+
+
+                // ----------------------------------------------
+                // Draw navigation arrows
+                // ----------------------------------------------
+
+                destinationReachedRef.current =
+                  false
+
+                setDestinationReached(
+                  false
+                )
+
+                arrowPathRef.current?.show()
+
+                arrowPathRef.current?.setPath(
+                  position,
+                  destination.position
+                )
               },
 
 
-            // --------------------------------------------
+            // ================================================
             // XR FRAME
-            // --------------------------------------------
+            // ================================================
 
-            onXRFrame: () => {
+            onXRFrame:
+              () => {
 
-              arrowPathRef.current?.update()
-
-            },
-
+                arrowPathRef.current?.update()
+              },
           })
 
+
+        adapterRef.current =
+          adapter
+
+
+        // ======================================================
+        // INITIALIZE ADAPTER
+        // ======================================================
 
         await adapter.initialize()
 
@@ -983,16 +1057,36 @@ export default function NavigatePage() {
         }
 
 
-        adapterRef.current =
-          adapter
+        setStatus(
+          'Ready — tap the AR button'
+        )
 
 
-        // ----------------------------------------------------
+        console.log(
+          'MultiSet ThreeAdapter initialized'
+        )
+
+
+        // ======================================================
         // RESIZE
-        // ----------------------------------------------------
+        // ======================================================
 
         const handleResize =
           () => {
+
+            if (!rendererRef.current) {
+              return
+            }
+
+
+            if (!cameraRef.current) {
+              return
+            }
+
+
+            const camera =
+              cameraRef.current
+
 
             camera.aspect =
               window.innerWidth /
@@ -1002,14 +1096,10 @@ export default function NavigatePage() {
             camera.updateProjectionMatrix()
 
 
-            renderer.setSize(
-
+            rendererRef.current.setSize(
               window.innerWidth,
-
               window.innerHeight
-
             )
-
           }
 
 
@@ -1018,28 +1108,6 @@ export default function NavigatePage() {
           handleResize
         )
 
-
-        // ----------------------------------------------------
-        // READY
-        // ----------------------------------------------------
-
-        setStatus(
-          'Ready — tap the AR button'
-        )
-
-
-        // ----------------------------------------------------
-        // CLEANUP
-        // ----------------------------------------------------
-
-        return () => {
-
-          window.removeEventListener(
-            'resize',
-            handleResize
-          )
-
-        }
 
       } catch (err: any) {
 
@@ -1063,23 +1131,25 @@ export default function NavigatePage() {
         setStatus(
           'Initialization failed'
         )
-
       }
-
     }
 
 
     initialize()
 
 
-    // ========================================================
+    // ==========================================================
     // CLEANUP
-    // ========================================================
+    // ==========================================================
 
     return () => {
 
       disposed = true
 
+
+      // --------------------------------------------------------
+      // Arrow path
+      // --------------------------------------------------------
 
       try {
 
@@ -1090,9 +1160,12 @@ export default function NavigatePage() {
         console.error(
           err
         )
-
       }
 
+
+      // --------------------------------------------------------
+      // MultiSet adapter
+      // --------------------------------------------------------
 
       try {
 
@@ -1103,9 +1176,12 @@ export default function NavigatePage() {
         console.error(
           err
         )
-
       }
 
+
+      // --------------------------------------------------------
+      // Renderer
+      // --------------------------------------------------------
 
       if (
         rendererRef.current
@@ -1120,13 +1196,11 @@ export default function NavigatePage() {
           console.error(
             err
           )
-
         }
 
 
         const canvas =
-          rendererRef.current
-            .domElement
+          rendererRef.current.domElement
 
 
         if (
@@ -1136,13 +1210,11 @@ export default function NavigatePage() {
           canvas.parentElement.removeChild(
             canvas
           )
-
         }
 
 
         rendererRef.current =
           null
-
       }
 
 
@@ -1155,9 +1227,16 @@ export default function NavigatePage() {
       arrowPathRef.current =
         null
 
+      currentPositionRef.current =
+        null
+
+      destinationRef.current =
+        null
     }
 
-  }, [])
+  }, [
+    calculateDistance,
+  ])
 
 
   // ==========================================================
@@ -1187,9 +1266,9 @@ export default function NavigatePage() {
       "
     >
 
-      {/* ====================================================
+      {/* ======================================================
           THREE.JS / AR CANVAS
-      ===================================================== */}
+      ======================================================= */}
 
       <div
         ref={containerRef}
@@ -1201,9 +1280,9 @@ export default function NavigatePage() {
       />
 
 
-      {/* ====================================================
+      {/* ======================================================
           TOP STATUS
-      ===================================================== */}
+      ======================================================= */}
 
       <div
         className="
@@ -1243,6 +1322,7 @@ export default function NavigatePage() {
         {/* VPS STATUS */}
 
         {localized && (
+
           <div
             className="
               mt-2
@@ -1252,12 +1332,14 @@ export default function NavigatePage() {
           >
             ● VPS Localized
           </div>
+
         )}
 
 
         {/* ERROR */}
 
         {error && (
+
           <div
             className="
               mt-3
@@ -1271,14 +1353,15 @@ export default function NavigatePage() {
           >
             {error}
           </div>
+
         )}
 
       </div>
 
 
-      {/* ====================================================
-          DESTINATION / DISTANCE OVERLAY
-      ===================================================== */}
+      {/* ======================================================
+          DESTINATION / DISTANCE
+      ======================================================= */}
 
       {selectedDestination &&
         distance !== null &&
@@ -1367,9 +1450,9 @@ export default function NavigatePage() {
         )}
 
 
-      {/* ====================================================
+      {/* ======================================================
           DESTINATION REACHED
-      ===================================================== */}
+      ======================================================= */}
 
       {destinationReached &&
         selectedDestination && (
@@ -1393,7 +1476,7 @@ export default function NavigatePage() {
 
             <div
               className="
-                text-2xl
+                text-3xl
                 font-bold
               "
             >
@@ -1428,9 +1511,9 @@ export default function NavigatePage() {
         )}
 
 
-      {/* ====================================================
+      {/* ======================================================
           DESTINATION DRAWER
-      ===================================================== */}
+      ======================================================= */}
 
       <div
         className="
@@ -1446,6 +1529,7 @@ export default function NavigatePage() {
       >
 
         <DestinationDrawer
+
           destinations={
             destinations.map(
               destination => ({
@@ -1469,11 +1553,11 @@ export default function NavigatePage() {
           onSelect={
             handleDestinationSelect
           }
+
         />
 
       </div>
 
     </main>
-
   )
 }

@@ -1,685 +1,1155 @@
 <!doctype html>
 <html lang="en">
+
 <head>
+
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Three.js Navigation Test</title>
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+/>
+
+<title>
+  Indoor Navigation Arrow Test
+</title>
 
 <style>
-html,body,#app{
-  margin:0;
-  width:100%;
-  height:100%;
-  overflow:hidden;
-  background:#101216;
+
+html,
+body,
+#app {
+
+  margin: 0;
+
+  width: 100%;
+
+  height: 100%;
+
+  overflow: hidden;
+
+  background: #111318;
+
 }
-#info{
-  position:fixed;
-  top:16px;
-  left:16px;
-  right:16px;
-  z-index:10;
-  color:#fff;
-  background:rgba(0,0,0,.75);
-  padding:14px 16px;
-  border-radius:14px;
-  font:14px Arial,sans-serif;
-  box-sizing:border-box;
+
+#info {
+
+  position: fixed;
+
+  top: 16px;
+
+  left: 16px;
+
+  z-index: 10;
+
+  padding: 14px 18px;
+
+  color: white;
+
+  background:
+    rgba(0,0,0,.72);
+
+  border-radius: 14px;
+
+  font-family:
+    Arial,
+    sans-serif;
+
 }
-#info b{
-  display:block;
-  font-size:18px;
-  margin-bottom:5px;
+
+#info strong {
+
+  display: block;
+
+  font-size: 18px;
+
+  margin-bottom: 5px;
+
 }
-#buttons{
-  position:fixed;
-  bottom:18px;
-  left:0;
-  right:0;
-  z-index:10;
-  text-align:center;
+
+#reset {
+
+  position: fixed;
+
+  left: 50%;
+
+  bottom: 24px;
+
+  transform:
+    translateX(-50%);
+
+  z-index: 10;
+
+  border: 0;
+
+  padding: 13px 22px;
+
+  border-radius: 14px;
+
+  font-weight: 700;
+
 }
-button{
-  padding:13px 20px;
-  border:0;
-  border-radius:14px;
-  font-weight:700;
-  cursor:pointer;
-}
-#error{
-  margin-top:8px;
-  color:#ff7777;
-  white-space:pre-wrap;
-}
+
 </style>
 
-<!-- IMPORTANT: maps the bare "three" import used by OrbitControls -->
 <script type="importmap">
+
 {
+
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.179.1/build/three.module.js"
+
+    "three":
+      "https://cdn.jsdelivr.net/npm/three@0.179.1/build/three.module.js"
+
   }
+
 }
+
 </script>
+
 </head>
 
 <body>
+
 <div id="app"></div>
 
 <div id="info">
-  <b>Indoor Navigation — Three.js Test</b>
-  <div id="status">Loading Three.js...</div>
-  <div id="error"></div>
+
+  <strong>
+    Indoor Navigation
+  </strong>
+
+  <div id="status">
+    Navigating → Lift
+  </div>
+
 </div>
 
-<div id="buttons">
-  <button id="reset">Reset</button>
-</div>
+<button id="reset">
+  Reset
+</button>
 
 <script type="module">
-import * as THREE from "three";
 
-const statusEl = document.getElementById("status");
-const errorEl = document.getElementById("error");
+import * as THREE
+  from "three"
 
-try {
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x101216);
+/* =========================================
+   SCENE
+========================================= */
 
-const camera = new THREE.PerspectiveCamera(
-  55,
-  window.innerWidth / window.innerHeight,
-  0.01,
-  1000
-);
+const scene =
+  new THREE.Scene()
 
-camera.position.set(7, 7, 10);
+scene.background =
+  new THREE.Color(
+    0x111318
+  )
 
-const renderer = new THREE.WebGLRenderer({
-  antialias: true
-});
 
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+/* =========================================
+   CAMERA
+========================================= */
 
-document.getElementById("app").appendChild(renderer.domElement);
+const camera =
+  new THREE.PerspectiveCamera(
+    55,
+    window.innerWidth /
+      window.innerHeight,
+    0.01,
+    100
+  )
 
-/* Simple camera controls (no OrbitControls dependency) */
-let isDragging = false;
-let lastX = 0;
-let lastY = 0;
-let yaw = 0.55;
-let pitch = 0.65;
-let distance = 13;
+camera.position.set(
+  7,
+  7,
+  10
+)
+
+
+/* =========================================
+   RENDERER
+========================================= */
+
+const renderer =
+  new THREE.WebGLRenderer({
+    antialias: true
+  })
+
+renderer.setPixelRatio(
+  Math.min(
+    window.devicePixelRatio,
+    2
+  )
+)
+
+renderer.setSize(
+  window.innerWidth,
+  window.innerHeight
+)
+
+renderer.outputColorSpace =
+  THREE.SRGBColorSpace
+
+document
+  .getElementById("app")
+  .appendChild(
+    renderer.domElement
+  )
+
+
+/* =========================================
+   CAMERA CONTROLS
+========================================= */
+
+let yaw = 0.55
+
+let pitch = 0.65
+
+let cameraDistance = 13
+
+let dragging = false
+
+let lastX = 0
+
+let lastY = 0
+
 
 function updateCamera() {
-  const target = new THREE.Vector3(0, 0, 2);
+
+  const target =
+    new THREE.Vector3(
+      0,
+      0,
+      2
+    )
+
   camera.position.set(
-    target.x + Math.sin(yaw) * Math.cos(pitch) * distance,
-    target.y + Math.sin(pitch) * distance,
-    target.z + Math.cos(yaw) * Math.cos(pitch) * distance
-  );
-  camera.lookAt(target);
+
+    target.x +
+      Math.sin(yaw) *
+      Math.cos(pitch) *
+      cameraDistance,
+
+    target.y +
+      Math.sin(pitch) *
+      cameraDistance,
+
+    target.z +
+      Math.cos(yaw) *
+      Math.cos(pitch) *
+      cameraDistance
+
+  )
+
+  camera.lookAt(
+    target
+  )
 }
 
-renderer.domElement.addEventListener("pointerdown", (e) => {
-  isDragging = true;
-  lastX = e.clientX;
-  lastY = e.clientY;
-  renderer.domElement.setPointerCapture(e.pointerId);
-});
 
-renderer.domElement.addEventListener("pointermove", (e) => {
-  if (!isDragging) return;
-  yaw -= (e.clientX - lastX) * 0.008;
-  pitch += (e.clientY - lastY) * 0.008;
-  pitch = Math.max(0.15, Math.min(1.35, pitch));
-  lastX = e.clientX;
-  lastY = e.clientY;
-  updateCamera();
-});
+renderer.domElement
+  .addEventListener(
+    "pointerdown",
+    event => {
 
-renderer.domElement.addEventListener("pointerup", (e) => {
-  isDragging = false;
-  try { renderer.domElement.releasePointerCapture(e.pointerId); } catch {}
-});
+      dragging = true
 
-renderer.domElement.addEventListener("wheel", (e) => {
-  e.preventDefault();
-  distance += e.deltaY * 0.01;
-  distance = Math.max(4, Math.min(30, distance));
-  updateCamera();
-}, { passive: false });
+      lastX =
+        event.clientX
 
-updateCamera();
+      lastY =
+        event.clientY
 
-/* Lights */
+    }
+  )
+
+
+renderer.domElement
+  .addEventListener(
+    "pointermove",
+    event => {
+
+      if (!dragging)
+        return
+
+      yaw -=
+        (
+          event.clientX -
+          lastX
+        ) * 0.008
+
+      pitch +=
+        (
+          event.clientY -
+          lastY
+        ) * 0.008
+
+      pitch =
+        Math.max(
+          0.15,
+          Math.min(
+            1.35,
+            pitch
+          )
+        )
+
+      lastX =
+        event.clientX
+
+      lastY =
+        event.clientY
+
+      updateCamera()
+
+    }
+  )
+
+
+renderer.domElement
+  .addEventListener(
+    "pointerup",
+    () => {
+
+      dragging = false
+
+    }
+  )
+
+
+renderer.domElement
+  .addEventListener(
+    "wheel",
+    event => {
+
+      event.preventDefault()
+
+      cameraDistance +=
+        event.deltaY * 0.01
+
+      cameraDistance =
+        Math.max(
+          4,
+          Math.min(
+            30,
+            cameraDistance
+          )
+        )
+
+      updateCamera()
+
+    },
+    {
+      passive: false
+    }
+  )
+
+
+updateCamera()
+
+
+/* =========================================
+   LIGHT
+========================================= */
+
 scene.add(
   new THREE.HemisphereLight(
     0xffffff,
     0x444444,
     2
   )
-);
+)
 
-const light = new THREE.DirectionalLight(
-  0xffffff,
-  2
-);
 
-light.position.set(5, 10, 5);
-scene.add(light);
+/* =========================================
+   FLOOR
+========================================= */
 
-/* Floor */
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(18, 14),
-  new THREE.MeshStandardMaterial({
-    color: 0x242830,
-    roughness: 1
-  })
-);
+const floor =
+  new THREE.Mesh(
 
-floor.rotation.x = -Math.PI / 2;
-scene.add(floor);
+    new THREE.PlaneGeometry(
+      18,
+      14
+    ),
 
-/* Grid */
-const grid = new THREE.GridHelper(
-  18,
-  36,
-  0x555b66,
-  0x30343b
-);
+    new THREE.MeshStandardMaterial({
+      color: 0x292d34,
+      roughness: 1
+    })
 
-scene.add(grid);
+  )
 
-/*
-  TEST ROUTE
+floor.rotation.x =
+  -Math.PI / 2
 
-  These are only test coordinates.
-  Later replace them with your MultiSet route.
-*/
+scene.add(
+  floor
+)
+
+
+/* =========================================
+   GRID
+========================================= */
+
+const grid =
+  new THREE.GridHelper(
+    18,
+    36,
+    0x555b66,
+    0x30343b
+  )
+
+scene.add(
+  grid
+)
+
+
+/* =========================================
+   ROUTE
+========================================= */
+
 const route = [
-  new THREE.Vector3(-4, 0.08, 4),
-  new THREE.Vector3(-2.8, 0.08, 3.5),
-  new THREE.Vector3(-1.6, 0.08, 3),
-  new THREE.Vector3(-0.4, 0.08, 2.7),
-  new THREE.Vector3(0.8, 0.08, 2.1),
-  new THREE.Vector3(1.7, 0.08, 1.2),
-  new THREE.Vector3(2.5, 0.08, 0.3)
-];
 
-/* Route line */
-const routeGeometry =
-  new THREE.BufferGeometry().setFromPoints(route);
+  new THREE.Vector3(
+    -4,
+    0,
+    4
+  ),
 
-const routeLine = new THREE.Line(
-  routeGeometry,
-  new THREE.LineBasicMaterial({
-    color: 0x4da3ff,
-    transparent: true,
-    opacity: 0.35
-  })
-);
+  new THREE.Vector3(
+    -2.8,
+    0,
+    3.5
+  ),
 
-scene.add(routeLine);
+  new THREE.Vector3(
+    -1.6,
+    0,
+    3
+  ),
 
-/* ==========================================
-   ANIMATED NAVIGATION ARROWS
-========================================== */
+  new THREE.Vector3(
+    -0.4,
+    0,
+    2.7
+  ),
 
-const arrowGroup = new THREE.Group();
-scene.add(arrowGroup);
+  new THREE.Vector3(
+    0.8,
+    0,
+    2.1
+  ),
 
-const arrows = [];
+  new THREE.Vector3(
+    1.7,
+    0,
+    1.2
+  ),
 
-function createArrow() {
+  new THREE.Vector3(
+    2.5,
+    0,
+    0.3
+  )
 
-  const group = new THREE.Group();
+]
 
-  const shaft = new THREE.Mesh(
-    new THREE.BoxGeometry(
-      0.18,
-      0.045,
-      0.48
-    ),
-    new THREE.MeshStandardMaterial({
-      color: 0x55c7ff,
-      emissive: 0x147ba8,
-      emissiveIntensity: 1.5
+
+/* =========================================
+   NAVIGATION GROUP
+========================================= */
+
+const navigationGroup =
+  new THREE.Group()
+
+scene.add(
+  navigationGroup
+)
+
+
+/* =========================================
+   SETTINGS
+========================================= */
+
+const GROUND_Y =
+  0.025
+
+const SIDE_WIDTH =
+  0.28
+
+const ARROW_SPACING =
+  0.65
+
+const PURPLE =
+  0x8b7cff
+
+
+/* =========================================
+   CREATE SIDE BORDER
+========================================= */
+
+function createBorder(
+  points
+) {
+
+  const geometry =
+    new THREE.BufferGeometry()
+      .setFromPoints(
+        points
+      )
+
+  const material =
+    new THREE.LineBasicMaterial({
+
+      color:
+        PURPLE,
+
+      transparent:
+        true,
+
+      opacity:
+        0.75,
+
+      depthWrite:
+        false
+
     })
-  );
 
-  /*
-    Arrow head points forward along local -Z.
-  */
-  const head = new THREE.Mesh(
-    new THREE.ConeGeometry(
-      0.20,
-      0.34,
-      3
-    ),
-    new THREE.MeshStandardMaterial({
-      color: 0x55c7ff,
-      emissive: 0x147ba8,
-      emissiveIntensity: 1.5
-    })
-  );
+  const line =
+    new THREE.Line(
+      geometry,
+      material
+    )
 
-  head.rotation.x = Math.PI / 2;
-  head.position.z = -0.35;
+  line.position.y =
+    GROUND_Y
 
-  group.add(shaft);
-  group.add(head);
+  navigationGroup.add(
+    line
+  )
 
-  group.userData.phase =
-    Math.random() * Math.PI * 2;
-
-  return group;
 }
 
-/*
-  Create arrows between every route point.
-*/
+
+/* =========================================
+   CREATE TWO BORDERS
+========================================= */
+
+function createBorders() {
+
+  const left = []
+
+  const right = []
+
+  for (
+    let i = 0;
+    i < route.length;
+    i++
+  ) {
+
+    let direction
+
+    if (
+      i === 0
+    ) {
+
+      direction =
+        new THREE.Vector3()
+          .subVectors(
+            route[1],
+            route[0]
+          )
+          .normalize()
+
+    }
+
+    else if (
+      i === route.length - 1
+    ) {
+
+      direction =
+        new THREE.Vector3()
+          .subVectors(
+            route[i],
+            route[i - 1]
+          )
+          .normalize()
+
+    }
+
+    else {
+
+      const previous =
+        new THREE.Vector3()
+          .subVectors(
+            route[i],
+            route[i - 1]
+          )
+          .normalize()
+
+      const next =
+        new THREE.Vector3()
+          .subVectors(
+            route[i + 1],
+            route[i]
+          )
+          .normalize()
+
+      direction =
+        previous
+          .add(next)
+          .normalize()
+
+    }
+
+
+    const perpendicular =
+      new THREE.Vector3(
+        -direction.z,
+        0,
+        direction.x
+      ).normalize()
+
+
+    const leftPoint =
+      route[i]
+        .clone()
+        .add(
+          perpendicular
+            .clone()
+            .multiplyScalar(
+              SIDE_WIDTH
+            )
+        )
+
+    const rightPoint =
+      route[i]
+        .clone()
+        .add(
+          perpendicular
+            .clone()
+            .multiplyScalar(
+              -SIDE_WIDTH
+            )
+        )
+
+
+    leftPoint.y =
+      GROUND_Y
+
+    rightPoint.y =
+      GROUND_Y
+
+
+    left.push(
+      leftPoint
+    )
+
+    right.push(
+      rightPoint
+    )
+
+  }
+
+
+  createBorder(
+    left
+  )
+
+  createBorder(
+    right
+  )
+
+}
+
+
+createBorders()
+
+
+/* =========================================
+   ROUTE LENGTH
+========================================= */
+
+function getRouteLength() {
+
+  let length = 0
+
+  for (
+    let i = 0;
+    i < route.length - 1;
+    i++
+  ) {
+
+    length +=
+      route[i]
+        .distanceTo(
+          route[i + 1]
+        )
+
+  }
+
+  return length
+}
+
+
+/* =========================================
+   POINT ON ROUTE
+========================================= */
+
+function getPointAtDistance(
+  distance
+) {
+
+  let remaining =
+    distance
+
+  for (
+    let i = 0;
+    i < route.length - 1;
+    i++
+  ) {
+
+    const start =
+      route[i]
+
+    const end =
+      route[i + 1]
+
+    const length =
+      start.distanceTo(
+        end
+      )
+
+    if (
+      remaining <= length
+    ) {
+
+      const direction =
+        new THREE.Vector3()
+          .subVectors(
+            end,
+            start
+          )
+          .normalize()
+
+
+      const position =
+        start
+          .clone()
+          .add(
+            direction
+              .clone()
+              .multiplyScalar(
+                remaining
+              )
+          )
+
+
+      position.y =
+        GROUND_Y
+
+
+      const angle =
+        Math.atan2(
+          direction.x,
+          direction.z
+        )
+
+
+      return {
+        position,
+        angle
+      }
+
+    }
+
+    remaining -=
+      length
+
+  }
+
+  return null
+
+}
+
+
+/* =========================================
+   CREATE CHEVRON
+========================================= */
+
+function createChevron() {
+
+  const group =
+    new THREE.Group()
+
+
+  const width =
+    0.22
+
+  const length =
+    0.28
+
+
+  const points = [
+
+    new THREE.Vector3(
+      -width,
+      0,
+      length * 0.35
+    ),
+
+    new THREE.Vector3(
+      0,
+      0,
+      -length * 0.35
+    ),
+
+    new THREE.Vector3(
+      width,
+      0,
+      length * 0.35
+    )
+
+  ]
+
+
+  const geometry =
+    new THREE.BufferGeometry()
+      .setFromPoints(
+        points
+      )
+
+
+  const material =
+    new THREE.LineBasicMaterial({
+
+      color:
+        PURPLE,
+
+      transparent:
+        true,
+
+      opacity:
+        0.95,
+
+      depthWrite:
+        false
+
+    })
+
+
+  const line =
+    new THREE.Line(
+      geometry,
+      material
+    )
+
+
+  /*
+   * Ground-level.
+   */
+  line.position.y =
+    0.012
+
+
+  group.add(
+    line
+  )
+
+
+  return group
+
+}
+
+
+/* =========================================
+   CREATE ARROWS
+========================================= */
+
+const arrows = []
+
+const totalLength =
+  getRouteLength()
+
+const arrowCount =
+  Math.floor(
+    totalLength /
+      ARROW_SPACING
+  )
+
+
 for (
   let i = 0;
-  i < route.length - 1;
+  i < arrowCount;
   i++
 ) {
 
-  const start = route[i];
-  const end = route[i + 1];
+  const distance =
+    (
+      i + 0.5
+    ) *
+    ARROW_SPACING
 
-  const direction =
-    new THREE.Vector3().subVectors(
-      end,
-      start
-    );
 
-  const distance = direction.length();
+  const point =
+    getPointAtDistance(
+      distance
+    )
 
-  const count =
-    Math.max(
-      1,
-      Math.floor(distance / 0.65)
-    );
 
-  for (
-    let j = 0;
-    j < count;
-    j++
-  ) {
+  if (!point)
+    continue
 
-    const t =
-      (j + 0.5) / count;
 
-    const arrow = createArrow();
+  const arrow =
+    createChevron()
 
-    arrow.position.lerpVectors(
-      start,
-      end,
-      t
-    );
 
-    /*
-      Rotate arrow toward next route point.
-    */
-    arrow.rotation.y =
-      Math.atan2(
-        direction.x,
-        direction.z
-      );
+  arrow.position.copy(
+    point.position
+  )
 
-    arrowGroup.add(arrow);
-    arrows.push(arrow);
-  }
+
+  /*
+   * Arrow points toward
+   * destination.
+   */
+  arrow.rotation.y =
+    point.angle
+
+
+  arrow.userData.phase =
+    i * 0.55
+
+
+  navigationGroup.add(
+    arrow
+  )
+
+
+  arrows.push(
+    arrow
+  )
+
 }
 
-/* ==========================================
-   DESTINATION MARKER
-========================================== */
+
+/* =========================================
+   DESTINATION
+========================================= */
 
 const destination =
-  route[route.length - 1];
+  route[
+    route.length - 1
+  ]
 
-const marker = new THREE.Group();
 
-marker.position.copy(
+const destinationRing =
+  new THREE.Mesh(
+
+    new THREE.RingGeometry(
+      0.35,
+      0.43,
+      48
+    ),
+
+    new THREE.MeshBasicMaterial({
+
+      color:
+        0x8b7cff,
+
+      transparent:
+        true,
+
+      opacity:
+        0.9,
+
+      side:
+        THREE.DoubleSide
+
+    })
+
+  )
+
+
+destinationRing.rotation.x =
+  -Math.PI / 2
+
+
+destinationRing.position.copy(
   destination
-);
+)
 
-scene.add(marker);
+destinationRing.position.y =
+  GROUND_Y
 
-/* Marker base */
-const base = new THREE.Mesh(
-  new THREE.CylinderGeometry(
-    0.48,
-    0.48,
-    0.08,
-    48
-  ),
-  new THREE.MeshStandardMaterial({
-    color: 0x42d392,
-    emissive: 0x176b4b,
-    emissiveIntensity: 1
-  })
-);
 
-base.position.y = 0.12;
-marker.add(base);
+scene.add(
+  destinationRing
+)
 
-/* Pulsing ring */
-const ring = new THREE.Mesh(
-  new THREE.RingGeometry(
-    0.55,
-    0.65,
-    48
-  ),
-  new THREE.MeshBasicMaterial({
-    color: 0x6fffb2,
-    transparent: true,
-    opacity: 0.8,
-    side: THREE.DoubleSide
-  })
-);
 
-ring.rotation.x = -Math.PI / 2;
-ring.position.y = 0.18;
-
-marker.add(ring);
-
-/* ==========================================
-   DESTINATION BOARD
-========================================== */
-
-const board = new THREE.Group();
-
-board.position.set(
-  destination.x,
-  destination.y + 1.15,
-  destination.z
-);
-
-scene.add(board);
-
-/* Board background */
-const panel = new THREE.Mesh(
-  new THREE.BoxGeometry(
-    1.7,
-    0.55,
-    0.06
-  ),
-  new THREE.MeshStandardMaterial({
-    color: 0x11151c
-  })
-);
-
-board.add(panel);
-
-/* Board text */
-const canvas =
-  document.createElement("canvas");
-
-canvas.width = 1024;
-canvas.height = 256;
-
-const ctx =
-  canvas.getContext("2d");
-
-ctx.fillStyle = "#11151c";
-ctx.fillRect(
-  0,
-  0,
-  1024,
-  256
-);
-
-ctx.fillStyle = "#55c7ff";
-ctx.font = "bold 90px Arial";
-ctx.textAlign = "center";
-ctx.textBaseline = "middle";
-
-ctx.fillText(
-  "LIFT",
-  512,
-  128
-);
-
-const texture =
-  new THREE.CanvasTexture(canvas);
-
-const textMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(
-    1.55,
-    0.39
-  ),
-  new THREE.MeshBasicMaterial({
-    map: texture,
-    transparent: true
-  })
-);
-
-textMesh.position.z = 0.04;
-
-board.add(textMesh);
-
-/* ==========================================
-   SIMULATED USER
-========================================== */
-
-const user = new THREE.Mesh(
-  new THREE.SphereGeometry(
-    0.18,
-    24,
-    24
-  ),
-  new THREE.MeshStandardMaterial({
-    color: 0xffcc55,
-    emissive: 0x8a5b00,
-    emissiveIntensity: 1.3
-  })
-);
-
-user.position.copy(
-  route[0]
-);
-
-user.position.y = 0.3;
-
-scene.add(user);
-
-/* ==========================================
-   MOVEMENT
-========================================== */
-
-let progress = 0;
-let reached = false;
-
-function updateUser(delta) {
-
-  if (reached) {
-    return;
-  }
-
-  progress += delta * 0.045;
-
-  if (progress >= 1) {
-
-    progress = 1;
-    reached = true;
-
-    statusEl.textContent =
-      "✓ Destination reached — Lift";
-
-  } else {
-
-    statusEl.textContent =
-      "Navigating → Lift";
-  }
-
-  const scaled =
-    progress * (route.length - 1);
-
-  const index =
-    Math.min(
-      Math.floor(scaled),
-      route.length - 2
-    );
-
-  const t =
-    scaled - index;
-
-  user.position.lerpVectors(
-    route[index],
-    route[index + 1],
-    t
-  );
-
-  user.position.y = 0.3;
-}
-
-/* ==========================================
+/* =========================================
    ANIMATION
-========================================== */
+========================================= */
 
 const clock =
-  new THREE.Clock();
+  new THREE.Clock()
+
 
 function animate(time) {
 
   requestAnimationFrame(
     animate
-  );
+  )
 
-  const delta =
-    clock.getDelta();
 
-  /* Arrow animation */
+  const elapsed =
+    clock.getElapsedTime()
+
+
+  /*
+   * Chevron animation.
+   *
+   * Notice:
+   *
+   * NO Y MOVEMENT.
+   */
   arrows.forEach(
     (arrow, index) => {
 
       const phase =
-        time * 0.004 +
-        index * 0.65 +
-        arrow.userData.phase;
+        elapsed * 2.2 +
+        index * 0.55
+
 
       const pulse =
-        0.85 +
-        Math.sin(phase) * 0.15;
+        0.86 +
+        Math.sin(
+          phase
+        ) * 0.14
+
 
       arrow.scale.set(
         pulse,
         pulse,
         pulse
-      );
+      )
 
-      arrow.position.y =
-        0.08 +
-        Math.max(
-          0,
-          Math.sin(phase)
-        ) * 0.035;
+
+      const line =
+        arrow.children[0]
+
+
+      const material =
+        line.material
+
+
+      material.opacity =
+        0.35 +
+        (
+          0.6 *
+          (
+            (
+              Math.sin(
+                phase
+              ) + 1
+            ) / 2
+          )
+        )
+
     }
-  );
+  )
 
-  /* Destination pulse */
-  if (reached) {
-
-    const p =
-      1 +
-      Math.sin(time * 0.005) *
-      0.22;
-
-    ring.scale.set(
-      p,
-      p,
-      p
-    );
-
-    ring.material.opacity =
-      0.45 +
-      (Math.sin(time * 0.005) + 1) *
-      0.2;
-  }
-
-  updateUser(delta);
 
   /*
-    Keep board facing camera.
-  */
-  board.quaternion.copy(
-    camera.quaternion
-  );
+   * Destination pulse.
+   */
+  const destinationPulse =
+    1 +
+    Math.sin(
+      elapsed * 3
+    ) * 0.12
+
+
+  destinationRing.scale.set(
+    destinationPulse,
+    destinationPulse,
+    destinationPulse
+  )
+
+
+  destinationRing.material.opacity =
+    0.45 +
+    (
+      (
+        Math.sin(
+          elapsed * 3
+        ) + 1
+      ) / 2
+    ) * 0.4
 
 
   renderer.render(
     scene,
     camera
-  );
+  )
+
 }
 
-requestAnimationFrame(
-  animate
-);
 
-/* Reset */
-document.getElementById(
-  "reset"
-).onclick = () => {
+animate()
 
-  progress = 0;
-  reached = false;
 
-  user.position.copy(
-    route[0]
-  );
+/* =========================================
+   RESET
+========================================= */
 
-  user.position.y = 0.3;
+document
+  .getElementById("reset")
+  .onclick = () => {
 
-  ring.scale.set(
-    1,
-    1,
-    1
-  );
+    arrows.forEach(
+      arrow => {
 
-  statusEl.textContent =
-    "Navigating → Lift";
-};
+        arrow.scale.set(
+          1,
+          1,
+          1
+        )
 
-/* Resize */
+      }
+    )
+
+  }
+
+
+/* =========================================
+   RESIZE
+========================================= */
+
 window.addEventListener(
   "resize",
   () => {
 
     camera.aspect =
       window.innerWidth /
-      window.innerHeight;
+      window.innerHeight
 
-    camera.updateProjectionMatrix();
+    camera.updateProjectionMatrix()
 
     renderer.setSize(
       window.innerWidth,
       window.innerHeight
-    );
+    )
+
   }
-);
+)
 
-statusEl.textContent =
-  "Three.js loaded — Navigating → Lift";
-
-} catch (error) {
-
-  console.error(error);
-
-  statusEl.textContent =
-    "Three.js failed to initialize";
-
-  errorEl.textContent =
-    error?.stack ||
-    String(error);
-}
 </script>
 
 </body>
+
 </html>
