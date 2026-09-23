@@ -1,12 +1,6 @@
 'use client'
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from 'react'
-
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 
 import {
@@ -14,30 +8,26 @@ import {
   XRSessionManager,
 } from '@multisetai/vps/core'
 
-import {
-  ThreeAdapter,
-} from '@multisetai/vps/three'
- 
-import {
-  AnimatedArrowPath,
-} from '@/components/navigation/AnimatedArrowPath'
+import { ThreeAdapter } from '@multisetai/vps/three'
+
+
+import { AnimatedArrowPath } from '@/components/navigation/AnimatedArrowPath'
 import { DestinationDrawer, DestinationItem } from '@/components/navigation/destination-drawer'
 
-
-// ============================================================
-// DESTINATION TYPE
-// ============================================================
+/* =========================================================
+   TYPES
+========================================================= */
 
 type Destination = DestinationItem & {
   position: THREE.Vector3
 }
 
+/* =========================================================
+   DESTINATIONS
+   Kokarya map coordinates
+========================================================= */
 
-// ============================================================
-// KOKARYA DESTINATIONS
-// ============================================================
-
-const destinations: Destination[] = [
+const DESTINATIONS: Destination[] = [
   {
     id: 'cabin-1',
     name: 'Cabin 1',
@@ -99,7 +89,7 @@ const destinations: Destination[] = [
   },
 
   {
-    id: 'entrance',
+    id: 'entrance-door',
     name: 'Entrance Door',
     position: new THREE.Vector3(
       -0.058,
@@ -109,276 +99,601 @@ const destinations: Destination[] = [
   },
 ]
 
+/* =========================================================
+   CONSTANTS
+========================================================= */
 
-// ============================================================
-// NAVIGATION SETTINGS
-// ============================================================
+const ARRIVAL_DISTANCE = 0.65
 
-// Distance in meters at which destination is considered reached.
-const ARRIVAL_DISTANCE = 0.8
+/*
+ * Small offset above the actual floor.
+ *
+ * This prevents z-fighting when the arrow is exactly
+ * touching the physical/map floor.
+ */
+const ARROW_FLOOR_OFFSET = 0.025
 
-// ============================================================
-// PAGE
-// ============================================================
+/*
+ * Approximate eye height.
+ *
+ * Used only as a fallback when we don't have a reliable
+ * destination floor height.
+ */
+const DEFAULT_EYE_HEIGHT = 1.4
+
+/* =========================================================
+   PAGE
+========================================================= */
 
 export default function NavigatePage() {
-
-  // ==========================================================
-  // DOM
-  // ==========================================================
-
   const containerRef =
     useRef<HTMLDivElement | null>(null)
-
-
-  // ==========================================================
-  // MULTISET
-  // ==========================================================
 
   const adapterRef =
     useRef<ThreeAdapter | null>(null)
 
-  const sessionRef =
-    useRef<XRSessionManager | null>(null)
-
-
-  // ==========================================================
-  // THREE.JS
-  // ==========================================================
-
-  const rendererRef =
-    useRef<THREE.WebGLRenderer | null>(null)
-
-  const sceneRef =
-    useRef<THREE.Scene | null>(null)
-
-  const cameraRef =
-    useRef<THREE.PerspectiveCamera | null>(null)
-
-
-  // ==========================================================
-  // NAVIGATION
-  // ==========================================================
-
   const arrowPathRef =
     useRef<AnimatedArrowPath | null>(null)
 
-  const currentPositionRef =
-    useRef<THREE.Vector3 | null>(null)
+  const worldFromMapRef =
+    useRef<THREE.Matrix4 | null>(null)
 
-  const destinationRef =
+  const selectedDestinationRef =
     useRef<Destination | null>(null)
 
-  // Important:
-  // Keep reached state in a ref as well.
-  // This prevents stale React state inside MultiSet callbacks.
-  const destinationReachedRef =
-    useRef(false)
+  const destinationWorldPositionRef =
+    useRef<THREE.Vector3 | null>(null)
 
+  const destinationMarkerRef =
+    useRef<THREE.Group | null>(null)
 
-  // ==========================================================
-  // STATE
-  // ==========================================================
+  const destinationBoardRef =
+    useRef<THREE.Sprite | null>(null)
 
-  const [
-    status,
-    setStatus,
-  ] = useState(
-    'Initializing...'
-  )
+  const currentUserWorldPositionRef =
+    useRef(new THREE.Vector3())
 
-  const [
-    error,
-    setError,
-  ] = useState('')
+  const lastDistanceRef =
+    useRef<number | null>(null)
 
-  const [
-    localized,
-    setLocalized,
-  ] = useState(false)
+  const arrivalStableFramesRef =
+    useRef(0)
 
-  const [
-    selectedId,
-    setSelectedId,
-  ] = useState<string | null>(null)
+  const [selectedId, setSelectedId] =
+    useState<string | null>(null)
 
-  const [
-    distance,
-    setDistance,
-  ] = useState<number | null>(null)
+  const [status, setStatus] =
+    useState('Initializing...')
 
-  const [
-    destinationReached,
-    setDestinationReached,
-  ] = useState(false)
+  const [error, setError] =
+    useState('')
 
+  const [distance, setDistance] =
+    useState<number | null>(null)
 
-  // ==========================================================
-  // DISTANCE CALCULATION
-  // ==========================================================
+  const [reached, setReached] =
+    useState(false)
 
-  const calculateDistance = useCallback(
-    (
-      from: THREE.Vector3,
-      to: THREE.Vector3
-    ) => {
+  /* =======================================================
+     DESTINATION SELECTION
+  ======================================================= */
 
-      // Indoor navigation should normally
-      // calculate distance on X/Z floor plane.
-      //
-      // We intentionally ignore Y.
-
-      const dx =
-        to.x - from.x
-
-      const dz =
-        to.z - from.z
-
-      return Math.sqrt(
-        dx * dx +
-        dz * dz
+  function handleDestinationSelect(id: string) {
+    const destination =
+      DESTINATIONS.find(
+        item => item.id === id
       )
-    },
-    []
-  )
 
+    if (!destination) {
+      return
+    }
 
-  // ==========================================================
-  // DESTINATION SELECT
-  // ==========================================================
+    selectedDestinationRef.current =
+      destination
 
-  const handleDestinationSelect =
-    useCallback(
-      (id: string) => {
+    setSelectedId(id)
 
-        const destination =
-          destinations.find(
-            item => item.id === id
-          )
+    setReached(false)
 
-        if (!destination) {
-          return
-        }
+    arrivalStableFramesRef.current = 0
 
+    lastDistanceRef.current = null
 
-        // Save destination.
-        destinationRef.current =
-          destination
-
-
-        // Reset arrival state.
-        destinationReachedRef.current =
-          false
-
-        setDestinationReached(false)
-
-
-        // Save selected destination.
-        setSelectedId(id)
-
-
-        // Get latest localized position.
-        const current =
-          currentPositionRef.current
-
-
-        // User has not localized yet.
-        if (!current) {
-
-          setStatus(
-            `Selected ${destination.name}. Start AR to begin navigation.`
-          )
-
-          return
-        }
-
-
-        // ------------------------------------------------------
-        // GROUND LEVEL
-        // ------------------------------------------------------
-
-        // Use current localized Y as floor level.
-        //
-        // This prevents the arrows from being placed
-        // at an old hard-coded floor height.
-
-        arrowPathRef.current?.setGroundY(
-          current.y
-        )
-
-
-        // ------------------------------------------------------
-        // CREATE ARROW PATH
-        // ------------------------------------------------------
-
-        arrowPathRef.current?.setPath(
-          current,
-          destination.position
-        )
-
-
-        // ------------------------------------------------------
-        // DISTANCE
-        // ------------------------------------------------------
-
-        const distanceValue =
-          calculateDistance(
-            current,
-            destination.position
-          )
-
-        setDistance(
-          distanceValue
-        )
-
-
-        setStatus(
-          `Navigating to ${destination.name}`
-        )
-      },
-      [
-        calculateDistance,
-      ]
+    setStatus(
+      `Navigating to ${destination.name}`
     )
 
+    /*
+     * If localization already happened,
+     * immediately update the destination marker.
+     */
+    const worldFromMap =
+      worldFromMapRef.current
 
-  // ==========================================================
-  // INITIALIZATION
-  // ==========================================================
+    if (worldFromMap) {
+      updateDestinationWorldPosition(
+        destination,
+        worldFromMap
+      )
+    }
+  }
+
+  /* =======================================================
+     MAP -> WORLD POSITION
+  ======================================================= */
+
+  function updateDestinationWorldPosition(
+    destination: Destination,
+    worldFromMap: THREE.Matrix4
+  ) {
+    /*
+     * IMPORTANT:
+     *
+     * destination.position is a MultiSet MAP coordinate.
+     *
+     * worldFromMap converts:
+     *
+     * MAP -> THREE WORLD
+     */
+    const worldPosition =
+      destination.position
+        .clone()
+        .applyMatrix4(worldFromMap)
+
+    destinationWorldPositionRef.current =
+      worldPosition
+
+    /*
+     * Move marker.
+     */
+    if (destinationMarkerRef.current) {
+      destinationMarkerRef.current.position.copy(
+        worldPosition
+      )
+    }
+
+    /*
+     * Move board.
+     */
+    if (destinationBoardRef.current) {
+      destinationBoardRef.current.position.set(
+        worldPosition.x,
+        worldPosition.y + 1.05,
+        worldPosition.z
+      )
+    }
+  }
+
+  /* =======================================================
+     CREATE DESTINATION MARKER
+  ======================================================= */
+
+  function createDestinationMarker(
+    scene: THREE.Scene
+  ) {
+    const group = new THREE.Group()
+
+    /*
+     * Main glowing sphere.
+     */
+    const sphereGeometry =
+      new THREE.SphereGeometry(
+        0.12,
+        24,
+        24
+      )
+
+    const sphereMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x7c3aed,
+        transparent: true,
+        opacity: 0.95,
+      })
+
+    const sphere =
+      new THREE.Mesh(
+        sphereGeometry,
+        sphereMaterial
+      )
+
+    sphere.position.y = 0.22
+
+    group.add(sphere)
+
+    /*
+     * Cone/pin underneath.
+     */
+    const coneGeometry =
+      new THREE.ConeGeometry(
+        0.10,
+        0.24,
+        24
+      )
+
+    const coneMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x7c3aed,
+        transparent: true,
+        opacity: 0.95,
+      })
+
+    const cone =
+      new THREE.Mesh(
+        coneGeometry,
+        coneMaterial
+      )
+
+    cone.position.y = 0.08
+
+    group.add(cone)
+
+    /*
+     * Ground ring.
+     */
+    const ringGeometry =
+      new THREE.RingGeometry(
+        0.18,
+        0.25,
+        32
+      )
+
+    const ringMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x7c3aed,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+
+    const ring =
+      new THREE.Mesh(
+        ringGeometry,
+        ringMaterial
+      )
+
+    ring.rotation.x =
+      -Math.PI / 2
+
+    ring.position.y =
+      ARROW_FLOOR_OFFSET
+
+    group.add(ring)
+
+    /*
+     * Outer glow ring.
+     */
+    const glowGeometry =
+      new THREE.RingGeometry(
+        0.28,
+        0.31,
+        32
+      )
+
+    const glowMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0xa78bfa,
+        transparent: true,
+        opacity: 0.35,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+
+    const glow =
+      new THREE.Mesh(
+        glowGeometry,
+        glowMaterial
+      )
+
+    glow.rotation.x =
+      -Math.PI / 2
+
+    glow.position.y =
+      ARROW_FLOOR_OFFSET + 0.002
+
+    group.add(glow)
+
+    scene.add(group)
+
+    destinationMarkerRef.current =
+      group
+
+    return group
+  }
+
+  /* =======================================================
+     CREATE DESTINATION BOARD
+  ======================================================= */
+
+  function createDestinationBoard(
+    scene: THREE.Scene
+  ) {
+    const canvas =
+      document.createElement('canvas')
+
+    canvas.width = 512
+    canvas.height = 160
+
+    const context =
+      canvas.getContext('2d')
+
+    if (!context) {
+      return null
+    }
+
+    context.clearRect(
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
+
+    /*
+     * Background.
+     */
+    context.fillStyle =
+      'rgba(15, 15, 20, 0.92)'
+
+    roundRect(
+      context,
+      10,
+      10,
+      492,
+      140,
+      28
+    )
+
+    context.fill()
+
+    /*
+     * Purple accent.
+     */
+    context.fillStyle =
+      '#7c3aed'
+
+    roundRect(
+      context,
+      10,
+      10,
+      10,
+      140,
+      5
+    )
+
+    context.fill()
+
+    /*
+     * Destination icon.
+     */
+    context.fillStyle =
+      '#ffffff'
+
+    context.beginPath()
+
+    context.arc(
+      55,
+      80,
+      15,
+      0,
+      Math.PI * 2
+    )
+
+    context.fill()
+
+    /*
+     * Text.
+     */
+    context.fillStyle =
+      '#ffffff'
+
+    context.font =
+      'bold 40px Arial'
+
+    context.textBaseline =
+      'middle'
+
+    context.fillText(
+      'Destination',
+      90,
+      58
+    )
+
+    context.font =
+      'bold 32px Arial'
+
+    context.fillStyle =
+      '#c4b5fd'
+
+    context.fillText(
+      'Select destination',
+      90,
+      105
+    )
+
+    const texture =
+      new THREE.CanvasTexture(
+        canvas
+      )
+
+    texture.colorSpace =
+      THREE.SRGBColorSpace
+
+    const material =
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+      })
+
+    const sprite =
+      new THREE.Sprite(material)
+
+    /*
+     * Not too large.
+     */
+    sprite.scale.set(
+      1.35,
+      0.42,
+      1
+    )
+
+    scene.add(sprite)
+
+    destinationBoardRef.current =
+      sprite
+
+    return sprite
+  }
+
+  /* =======================================================
+     UPDATE BOARD TEXT
+  ======================================================= */
+
+  function updateDestinationBoard(
+    name: string
+  ) {
+    const sprite =
+      destinationBoardRef.current
+
+    if (!sprite) {
+      return
+    }
+
+    const material =
+      sprite.material as THREE.SpriteMaterial
+
+    const texture =
+      material.map
+
+    if (!texture) {
+      return
+    }
+
+    const canvas =
+      texture.image as HTMLCanvasElement
+
+    const context =
+      canvas.getContext('2d')
+
+    if (!context) {
+      return
+    }
+
+    context.clearRect(
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
+
+    /*
+     * Background.
+     */
+    context.fillStyle =
+      'rgba(15, 15, 20, 0.92)'
+
+    roundRect(
+      context,
+      10,
+      10,
+      492,
+      140,
+      28
+    )
+
+    context.fill()
+
+    /*
+     * Purple bar.
+     */
+    context.fillStyle =
+      '#7c3aed'
+
+    roundRect(
+      context,
+      10,
+      10,
+      10,
+      140,
+      5
+    )
+
+    context.fill()
+
+    /*
+     * Small location icon.
+     */
+    context.fillStyle =
+      '#a78bfa'
+
+    context.beginPath()
+
+    context.arc(
+      55,
+      80,
+      15,
+      0,
+      Math.PI * 2
+    )
+
+    context.fill()
+
+    /*
+     * Destination name.
+     */
+    context.fillStyle =
+      '#ffffff'
+
+    context.font =
+      'bold 38px Arial'
+
+    context.textBaseline =
+      'middle'
+
+    context.fillText(
+      name,
+      90,
+      80
+    )
+
+    texture.needsUpdate = true
+  }
+
+  /* =======================================================
+     INIT
+  ======================================================= */
 
   useEffect(() => {
-
     let disposed = false
 
+    let scene: THREE.Scene | null =
+      null
 
-    async function initialize() {
+    let renderer:
+      THREE.WebGLRenderer | null =
+      null
 
+    let camera:
+      THREE.PerspectiveCamera | null =
+      null
+
+    async function init() {
       try {
-
-        // ======================================================
-        // WEBXR
-        // ======================================================
-
         setStatus(
           'Checking WebXR...'
         )
 
-
+        /*
+         * Use ThreeAdapter support check.
+         */
         const supported =
-          await XRSessionManager.isSupported()
-
+          await ThreeAdapter.isSupported()
 
         if (!supported) {
-
           throw new Error(
-            'WebXR is not supported on this device/browser.'
+            'WebXR immersive AR is not supported on this device/browser.'
           )
         }
-
-
-        // ======================================================
-        // ENVIRONMENT VARIABLES
-        // ======================================================
 
         const clientId =
           process.env
@@ -392,27 +707,19 @@ export default function NavigatePage() {
           process.env
             .NEXT_PUBLIC_MULTISET_MAP_CODE
 
-
         if (
           !clientId ||
           !clientSecret ||
           !mapCode
         ) {
-
           throw new Error(
             'Missing MultiSet environment variables.'
           )
         }
 
-
-        // ======================================================
-        // MULTISET CLIENT
-        // ======================================================
-
         setStatus(
           'Connecting to MultiSet...'
         )
-
 
         const client =
           new MultisetClient({
@@ -422,30 +729,25 @@ export default function NavigatePage() {
             code: mapCode,
           })
 
-
         await client.authorize()
-
 
         if (disposed) {
           return
         }
 
-
-        // ======================================================
-        // THREE.JS RENDERER
-        // ======================================================
-
         setStatus(
           'Creating AR renderer...'
         )
 
+        /* =================================================
+           RENDERER
+        ================================================= */
 
-        const renderer =
+        renderer =
           new THREE.WebGLRenderer({
             antialias: true,
             alpha: true,
           })
-
 
         renderer.setPixelRatio(
           Math.min(
@@ -454,26 +756,20 @@ export default function NavigatePage() {
           )
         )
 
-
         renderer.setSize(
           window.innerWidth,
           window.innerHeight
         )
-
 
         renderer.setClearColor(
           0x000000,
           0
         )
 
-
         renderer.domElement.style.position =
           'fixed'
 
-        renderer.domElement.style.top =
-          '0'
-
-        renderer.domElement.style.left =
+        renderer.domElement.style.inset =
           '0'
 
         renderer.domElement.style.width =
@@ -485,392 +781,135 @@ export default function NavigatePage() {
         renderer.domElement.style.zIndex =
           '0'
 
-
-        rendererRef.current =
-          renderer
-
-
         containerRef.current?.appendChild(
           renderer.domElement
         )
 
+        /* =================================================
+           SCENE
+        ================================================= */
 
-        // ======================================================
-        // SCENE
-        // ======================================================
-
-        const scene =
+        scene =
           new THREE.Scene()
 
+        /* =================================================
+           CAMERA
+        ================================================= */
 
-        sceneRef.current =
-          scene
-
-
-        // ======================================================
-        // CAMERA
-        // ======================================================
-
-        const camera =
+        camera =
           new THREE.PerspectiveCamera(
             70,
             window.innerWidth /
-              window.innerHeight,
+            window.innerHeight,
             0.01,
             1000
           )
 
-
-        cameraRef.current =
-          camera
-
-
-        // ======================================================
-        // ARROW PATH
-        // ======================================================
-
-        const arrowPath =
-          new AnimatedArrowPath({
-
-            color:
-              0x7c3aed,
-
-            arrowCount:
-              18,
-
-            spacing:
-              0.65,
-
-            // Temporary initial value.
-            //
-            // Once localization happens,
-            // this gets replaced with the actual
-            // localized floor Y.
-
-            groundY:
-              -2.20,
-
-            arrowHeight:
-              0.025,
-
-            arrowScale:
-              0.55,
-          })
-
-
-        scene.add(
-          arrowPath.group
-        )
-
-
-        arrowPathRef.current =
-          arrowPath
-
-
-        // ======================================================
-        // XR SESSION
-        // ======================================================
+        /* =================================================
+           AR SESSION
+        ================================================= */
 
         setStatus(
           'Creating MultiSet XR session...'
         )
 
-
         const session =
           new XRSessionManager(
-
-            // IMPORTANT:
-            // Do not pass WebGL2RenderingContext
-            // as a separate constructor argument.
-            //
-            // The renderer context itself is passed here.
-
             renderer.getContext() as WebGL2RenderingContext,
-
             {
               client,
 
-              autoLocalize:
-                true,
+              autoLocalize: true,
 
               referenceSpaceType:
                 'local',
 
-              confidenceCheck:
-                true,
-
-              confidenceThreshold:
-                0.5,
-
-
-              // ================================================
-              // SESSION START
-              // ================================================
-
-              onSessionStart:
-                () => {
-
-                  console.log(
-                    'XR SESSION STARTED'
-                  )
-
-                  setStatus(
-                    'Scanning...'
-                  )
-                },
-
-
-              // ================================================
-              // SESSION END
-              // ================================================
-
-              onSessionEnd:
-                () => {
-
-                  console.log(
-                    'XR SESSION ENDED'
-                  )
-
-                  setStatus(
-                    'AR session ended'
-                  )
-                },
-
-
-              // ================================================
-              // LOCALIZATION START
-              // ================================================
-
-              onLocalizationInit:
-                () => {
-
-                  console.log(
-                    'Localization started'
-                  )
-
-                  setStatus(
-                    'Scanning... Move the phone slowly and point at the mapped area.'
-                  )
-                },
-
-
-              // ================================================
-              // LOCALIZATION RESULT
-              // ================================================
-
-              onLocalizationResult:
-                (result: any) => {
-
-                  console.log(
-                    'Localization result:',
-                    result
-                  )
-
-
-                  const data =
-                    result?.localizeData
-
-
-                  if (
-                    !data?.position
-                  ) {
-                    return
-                  }
-
-
-                  // ----------------------------------------------
-                  // CURRENT MAP POSITION
-                  // ----------------------------------------------
-
-                  const position =
-                    new THREE.Vector3(
-                      data.position.x,
-                      data.position.y,
-                      data.position.z
-                    )
-
-
-                  currentPositionRef.current =
-                    position
-
-
-                  // ----------------------------------------------
-                  // DESTINATION
-                  // ----------------------------------------------
-
-                  const destination =
-                    destinationRef.current
-
-
-                  if (!destination) {
-                    return
-                  }
-
-
-                  // ----------------------------------------------
-                  // GROUND LEVEL
-                  // ----------------------------------------------
-
-                  // Keep arrows at the user's current
-                  // localized floor height.
-
-                  arrowPathRef.current?.setGroundY(
-                    position.y
-                  )
-
-
-                  // ----------------------------------------------
-                  // DISTANCE
-                  // ----------------------------------------------
-
-                  const remaining =
-                    calculateDistance(
-                      position,
-                      destination.position
-                    )
-
-
-                  setDistance(
-                    remaining
-                  )
-
-
-                  // ----------------------------------------------
-                  // DESTINATION REACHED
-                  // ----------------------------------------------
-
-                  if (
-                    remaining <=
-                    ARRIVAL_DISTANCE
-                  ) {
-
-                    // Ref prevents the callback from
-                    // repeatedly firing the completion state.
-
-                    if (
-                      !destinationReachedRef.current
-                    ) {
-
-                      destinationReachedRef.current =
-                        true
-
-
-                      setDestinationReached(
-                        true
-                      )
-
-
-                      setStatus(
-                        `✓ You reached ${destination.name}`
-                      )
-
-
-                      // Remove arrows after arrival.
-                      arrowPathRef.current?.hide()
-                    }
-
-
-                    return
-                  }
-
-
-                  // ----------------------------------------------
-                  // USER MOVED AWAY AGAIN
-                  // ----------------------------------------------
-
-                  if (
-                    destinationReachedRef.current
-                  ) {
-
-                    destinationReachedRef.current =
-                      false
-
-                    setDestinationReached(
-                      false
-                    )
-
-                    arrowPathRef.current?.show()
-                  }
-
-
-                  // ----------------------------------------------
-                  // UPDATE ARROW PATH
-                  // ----------------------------------------------
-
-                  arrowPathRef.current?.setPath(
-                    position,
-                    destination.position
-                  )
-
-
-                  setStatus(
-                    `Navigating to ${destination.name}`
-                  )
-                },
-
-
-              // ================================================
-              // LOCALIZATION FAILURE
-              // ================================================
-
-              onLocalizationFailure:
-                (reason: any) => {
-
-                  console.warn(
-                    'Localization failed:',
-                    reason
-                  )
-
-
-                  setStatus(
-                    'Scanning... Move the phone slowly and point at the mapped area.'
-                  )
-                },
-
-
-              // ================================================
-              // MULTISET ERROR
-              // ================================================
-
-              onError:
-                (err: any) => {
-
-                  console.error(
-                    'MULTISET ERROR:',
-                    err
-                  )
-
-
-                  const message =
-                    err instanceof Error
-                      ? `${err.name}: ${err.message}`
-                      : String(err)
-
-
-                  setError(
-                    message
-                  )
-
-
-                  setStatus(
-                    'MultiSet error'
-                  )
-                },
+              confidenceCheck: true,
+
+              confidenceThreshold: 0.5,
+
+              onSessionStart: () => {
+                console.log(
+                  'XR SESSION STARTED'
+                )
+
+                setStatus(
+                  selectedDestinationRef.current
+                    ? `Navigating to ${selectedDestinationRef.current.name}`
+                    : 'Scanning...'
+                )
+              },
+
+              onSessionEnd: () => {
+                console.log(
+                  'XR SESSION ENDED'
+                )
+
+                setStatus(
+                  'AR session ended'
+                )
+
+                setDistance(null)
+
+                setReached(false)
+
+                arrivalStableFramesRef.current = 0
+              },
+
+              onLocalizationInit: () => {
+                console.log(
+                  'Localization started'
+                )
+
+                setStatus(
+                  'Scanning... Move the phone slowly and point at the mapped area.'
+                )
+              },
+
+              onLocalizationResult: (
+                result: any
+              ) => {
+                console.log(
+                  'Localization result:',
+                  result
+                )
+              },
+
+              onLocalizationFailure: (
+                localizationError: any
+              ) => {
+                console.error(
+                  'Localization failed:',
+                  localizationError
+                )
+
+                setStatus(
+                  'Localization failed'
+                )
+              },
+
+              onError: (
+                sessionError: any
+              ) => {
+                console.error(
+                  'XR ERROR:',
+                  sessionError
+                )
+
+                setError(
+                  sessionError?.message ||
+                  String(sessionError)
+                )
+              },
             }
           )
 
-
-        sessionRef.current =
-          session
-
-
-        // ======================================================
-        // THREE ADAPTER
-        // ======================================================
+        /* =================================================
+           THREE ADAPTER
+        ================================================= */
 
         const adapter =
           new ThreeAdapter({
-
             session,
 
             renderer,
@@ -879,254 +918,350 @@ export default function NavigatePage() {
 
             camera,
 
-            showMesh:
-              false,
+            /*
+             * Keep map mesh hidden.
+             */
+            showMesh: false,
 
-            showGizmo:
-              false,
+            showGizmo: false,
 
-            useDefaultButton:
-              true,
+            useDefaultButton: true,
 
+            /* =============================================
+               LOCALIZATION SUCCESS
+            ============================================= */
 
-            // ================================================
-            // LOCALIZATION SUCCESS
-            // ================================================
+            onLocalizationSuccess: (
+              result: any,
+              worldFromMap: THREE.Matrix4
+            ) => {
+              console.log(
+                'LOCALIZATION SUCCESS'
+              )
 
-            onLocalizationSuccess:
-              (
-                result: any,
-                worldFromMap: any
-              ) => {
+              console.log(
+                'Result:',
+                result
+              )
 
-                console.log(
-                  'LOCALIZATION SUCCESS'
-                )
+              console.log(
+                'worldFromMap:',
+                worldFromMap
+              )
 
+              /*
+               * Save latest map -> world transform.
+               */
+              worldFromMapRef.current =
+                worldFromMap.clone()
 
-                console.log(
-                  'Result:',
-                  result
-                )
+              /*
+               * If destination was already selected,
+               * immediately convert it.
+               */
+              const destination =
+                selectedDestinationRef.current
 
-
-                console.log(
-                  'World From Map:',
+              if (destination) {
+                updateDestinationWorldPosition(
+                  destination,
                   worldFromMap
                 )
 
+                updateDestinationBoard(
+                  destination.name
+                )
+              }
 
-                setLocalized(
-                  true
+              setStatus(
+                destination
+                  ? `Navigating to ${destination.name}`
+                  : 'Localized successfully!'
+              )
+            },
+
+            /* =============================================
+               XR FRAME
+            ============================================= */
+
+            onXRFrame: () => {
+              if (!camera) {
+                return
+              }
+
+              /*
+               * VERY IMPORTANT:
+               *
+               * MultiSet updates camera.matrixWorld.
+               *
+               * Do NOT use camera.position.
+               *
+               * Use getWorldPosition().
+               */
+              camera.getWorldPosition(
+                currentUserWorldPositionRef.current
+              )
+
+              const userPosition =
+                currentUserWorldPositionRef.current
+
+              /*
+               * Animate arrows every XR frame.
+               */
+              if (arrowPathRef.current) {
+                arrowPathRef.current.update()
+              }
+
+              const destination =
+                selectedDestinationRef.current
+
+              const destinationWorld =
+                destinationWorldPositionRef.current
+
+              if (
+                !destination ||
+                !destinationWorld
+              ) {
+                return
+              }
+
+              /*
+               * Calculate horizontal distance.
+               *
+               * We intentionally ignore Y because
+               * navigation is primarily on the floor.
+               */
+              const dx =
+                destinationWorld.x -
+                userPosition.x
+
+              const dz =
+                destinationWorld.z -
+                userPosition.z
+
+              const horizontalDistance =
+                Math.sqrt(
+                  dx * dx +
+                  dz * dz
                 )
 
+              setDistance(
+                horizontalDistance
+              )
 
-                setStatus(
-                  'Localized successfully'
+              /*
+               * -----------------------------------------
+               * FLOOR HEIGHT
+               * -----------------------------------------
+               *
+               * Destination Y is normally the map
+               * coordinate recorded at the destination.
+               *
+               * After worldFromMap conversion it becomes
+               * the corresponding world floor height.
+               */
+              const floorY =
+                destinationWorld.y +
+                ARROW_FLOOR_OFFSET
+
+              /*
+               * Start arrow exactly from the user's
+               * current X/Z position.
+               *
+               * But put the arrow on the floor rather
+               * than at the camera's eye height.
+               */
+              const arrowStart =
+                new THREE.Vector3(
+                  userPosition.x,
+                  floorY,
+                  userPosition.z
                 )
 
-
-                const data =
-                  result?.localizeData
-
-
-                if (
-                  !data?.position
-                ) {
-                  return
-                }
-
-
-                const position =
-                  new THREE.Vector3(
-                    data.position.x,
-                    data.position.y,
-                    data.position.z
-                  )
-
-
-                currentPositionRef.current =
-                  position
-
-
-                // ----------------------------------------------
-                // Update floor level immediately
-                // ----------------------------------------------
-
-                arrowPathRef.current?.setGroundY(
-                  position.y
+              /*
+               * Destination point also sits at floor level.
+               */
+              const arrowEnd =
+                new THREE.Vector3(
+                  destinationWorld.x,
+                  floorY,
+                  destinationWorld.z
                 )
 
-
-                // ----------------------------------------------
-                // Existing destination
-                // ----------------------------------------------
-
-                const destination =
-                  destinationRef.current
-
-
-                if (!destination) {
-                  return
-                }
-
-
-                const remaining =
-                  calculateDistance(
-                    position,
-                    destination.position
-                  )
-
-
-                setDistance(
-                  remaining
+              /*
+               * Update arrow path.
+               *
+               * This makes the path begin from the
+               * user's current physical position.
+               */
+              if (
+                arrowPathRef.current
+              ) {
+                arrowPathRef.current.setGroundY(
+                  floorY
                 )
 
+                arrowPathRef.current.setPath(
+                  arrowStart,
+                  arrowEnd
+                )
+              }
 
-                // ----------------------------------------------
-                // Already reached
-                // ----------------------------------------------
+              /*
+               * -----------------------------------------
+               * ARRIVAL DETECTION
+               * -----------------------------------------
+               *
+               * Require several consecutive frames
+               * inside the arrival radius.
+               *
+               * This avoids flickering between:
+               *
+               * Reached / Navigating
+               *
+               * when VPS pose moves slightly.
+               */
+              if (
+                horizontalDistance <=
+                ARRIVAL_DISTANCE
+              ) {
+                arrivalStableFramesRef.current +=
+                  1
+              } else {
+                arrivalStableFramesRef.current = 0
+              }
 
-                if (
-                  remaining <=
-                  ARRIVAL_DISTANCE
-                ) {
-
-                  destinationReachedRef.current =
-                    true
-
-                  setDestinationReached(
-                    true
-                  )
-
-                  arrowPathRef.current?.hide()
+              /*
+               * Roughly 10 consecutive frames.
+               */
+              if (
+                arrivalStableFramesRef.current >=
+                10
+              ) {
+                if (!reached) {
+                  setReached(true)
 
                   setStatus(
-                    `✓ You reached ${destination.name}`
+                    `You reached ${destination.name}`
                   )
-
-                  return
                 }
+              } else {
+                if (reached) {
+                  setReached(false)
 
-
-                // ----------------------------------------------
-                // Draw navigation arrows
-                // ----------------------------------------------
-
-                destinationReachedRef.current =
-                  false
-
-                setDestinationReached(
-                  false
-                )
-
-                arrowPathRef.current?.show()
-
-                arrowPathRef.current?.setPath(
-                  position,
-                  destination.position
-                )
-              },
-
-
-            // ================================================
-            // XR FRAME
-            // ================================================
-
-            onXRFrame:
-              () => {
-
-                arrowPathRef.current?.update()
-              },
+                  setStatus(
+                    `Navigating to ${destination.name}`
+                  )
+                }
+              }
+            },
           })
-
 
         adapterRef.current =
           adapter
 
+        /* =================================================
+           CREATE ARROW PATH
+        ================================================= */
 
-        // ======================================================
-        // INITIALIZE ADAPTER
-        // ======================================================
+        const arrowPath = new AnimatedArrowPath({
+          color: 0x8b5cf6,
+
+          // Number of arrows
+          arrowCount: 18,
+
+          // Distance between arrows
+          spacing: 0.55,
+
+          // Tiny offset above the real floor
+          // Prevents z-fighting
+          groundOffset: 0.012,
+
+          // Width of the navigation corridor
+          pathWidth: 0.95,
+
+          // Arrow width
+          arrowWidth: 0.42,
+
+          // Arrow length
+          arrowLength: 0.55,
+
+          // Animation speed
+          animationSpeed: 0.9,
+
+          // Side border opacity
+          railOpacity: 0.55,
+
+          // Arrow opacity
+          arrowOpacity: 0.95,
+        })
+
+        scene.add(
+          arrowPath.group
+        )
+
+        /*
+         * Start hidden.
+         *
+         * We don't want arrows before localization.
+         */
+        arrowPath.group.visible = false
+
+        arrowPathRef.current =
+          arrowPath
+
+        /* =================================================
+           DESTINATION MARKER
+        ================================================= */
+
+        const marker =
+          createDestinationMarker(
+            scene
+          )
+
+        marker.visible = false
+
+        /* =================================================
+           DESTINATION BOARD
+        ================================================= */
+
+        const board =
+          createDestinationBoard(
+            scene
+          )
+
+        if (board) {
+          board.visible = false
+        }
+
+        /* =================================================
+           INITIALIZE ADAPTER
+        ================================================= */
 
         await adapter.initialize()
-
 
         if (disposed) {
           return
         }
 
-
+        /*
+         * Now we can show the navigation system
+         * only after localization.
+         */
         setStatus(
-          'Ready — tap the AR button'
+          'Ready — tap START AR.'
         )
-
 
         console.log(
           'MultiSet ThreeAdapter initialized'
         )
-
-
-        // ======================================================
-        // RESIZE
-        // ======================================================
-
-        const handleResize =
-          () => {
-
-            if (!rendererRef.current) {
-              return
-            }
-
-
-            if (!cameraRef.current) {
-              return
-            }
-
-
-            const camera =
-              cameraRef.current
-
-
-            camera.aspect =
-              window.innerWidth /
-              window.innerHeight
-
-
-            camera.updateProjectionMatrix()
-
-
-            rendererRef.current.setSize(
-              window.innerWidth,
-              window.innerHeight
-            )
-          }
-
-
-        window.addEventListener(
-          'resize',
-          handleResize
-        )
-
-
       } catch (err: any) {
-
-        console.error(
-          'INITIALIZATION ERROR:',
-          err
-        )
-
-
-        const message =
-          err instanceof Error
-            ? `${err.name}: ${err.message}`
-            : String(err)
-
+        console.error(err)
 
         setError(
-          message
+          err?.message ||
+          String(err)
         )
-
 
         setStatus(
           'Initialization failed'
@@ -1134,430 +1269,421 @@ export default function NavigatePage() {
       }
     }
 
+    init()
 
-    initialize()
-
-
-    // ==========================================================
-    // CLEANUP
-    // ==========================================================
+    /* =====================================================
+       CLEANUP
+    ===================================================== */
 
     return () => {
-
       disposed = true
 
-
-      // --------------------------------------------------------
-      // Arrow path
-      // --------------------------------------------------------
-
       try {
-
         arrowPathRef.current?.dispose()
-
-      } catch (err) {
-
+      } catch (error) {
         console.error(
-          err
+          'Arrow cleanup error:',
+          error
         )
       }
 
+      arrowPathRef.current = null
 
-      // --------------------------------------------------------
-      // MultiSet adapter
-      // --------------------------------------------------------
+      destinationMarkerRef.current = null
+
+      destinationBoardRef.current = null
+
+      worldFromMapRef.current = null
+
+      destinationWorldPositionRef.current =
+        null
 
       try {
-
         adapterRef.current?.dispose()
-
-      } catch (err) {
-
+      } catch (error) {
         console.error(
-          err
+          'Adapter cleanup error:',
+          error
         )
       }
 
-
-      // --------------------------------------------------------
-      // Renderer
-      // --------------------------------------------------------
+      adapterRef.current = null
 
       if (
-        rendererRef.current
+        renderer &&
+        renderer.domElement.parentElement
       ) {
-
-        try {
-
-          rendererRef.current.dispose()
-
-        } catch (err) {
-
-          console.error(
-            err
-          )
-        }
-
-
-        const canvas =
-          rendererRef.current.domElement
-
-
-        if (
-          canvas.parentElement
-        ) {
-
-          canvas.parentElement.removeChild(
-            canvas
-          )
-        }
-
-
-        rendererRef.current =
-          null
+        renderer.domElement.parentElement.removeChild(
+          renderer.domElement
+        )
       }
 
+      renderer?.dispose()
+    }
+  }, [reached])
 
-      adapterRef.current =
-        null
+  /* =======================================================
+     WHEN DESTINATION CHANGES
+  ======================================================= */
 
-      sessionRef.current =
-        null
+  useEffect(() => {
+    const destination =
+      selectedDestinationRef.current
 
-      arrowPathRef.current =
-        null
+    const worldFromMap =
+      worldFromMapRef.current
 
-      currentPositionRef.current =
-        null
-
-      destinationRef.current =
-        null
+    if (
+      !destination ||
+      !worldFromMap
+    ) {
+      return
     }
 
-  }, [
-    calculateDistance,
-  ])
+    updateDestinationWorldPosition(
+      destination,
+      worldFromMap
+    )
 
+    updateDestinationBoard(
+      destination.name
+    )
 
-  // ==========================================================
-  // SELECTED DESTINATION
-  // ==========================================================
+    /*
+     * Show navigation objects.
+     */
+    if (arrowPathRef.current) {
+      arrowPathRef.current.group.visible =
+        true
+    }
+
+    if (destinationMarkerRef.current) {
+      destinationMarkerRef.current.visible =
+        true
+    }
+
+    if (destinationBoardRef.current) {
+      destinationBoardRef.current.visible =
+        true
+    }
+  }, [selectedId])
+
+  /* =======================================================
+     DESTINATION UI
+  ======================================================= */
 
   const selectedDestination =
-    destinations.find(
-      item =>
-        item.id === selectedId
-    ) ?? null
+    DESTINATIONS.find(
+      item => item.id === selectedId
+    )
 
-
-  // ==========================================================
-  // UI
-  // ==========================================================
+  /* =======================================================
+     RENDER
+  ======================================================= */
 
   return (
-
     <main
-      className="
-        fixed
-        inset-0
-        overflow-hidden
-        bg-transparent
-        text-white
-      "
+      style={{
+        position: 'fixed',
+        inset: 0,
+        overflow: 'hidden',
+        background: 'transparent',
+      }}
     >
-
-      {/* ======================================================
-          THREE.JS / AR CANVAS
-      ======================================================= */}
+      {/* =================================================
+          THREE.JS CANVAS
+      ================================================= */}
 
       <div
         ref={containerRef}
-        className="
-          fixed
-          inset-0
-          z-0
-        "
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 1,
+          pointerEvents: 'none',
+        }}
       />
 
-
-      {/* ======================================================
+      {/* =================================================
           TOP STATUS
-      ======================================================= */}
+      ================================================= */}
 
       <div
-        className="
-          fixed
-          left-4
-          right-4
-          top-4
-          z-20
-          rounded-2xl
-          bg-black/70
-          p-4
-          backdrop-blur-md
-        "
-      >
+        style={{
+          position: 'fixed',
+          top: 16,
+          left: 16,
+          right: 16,
+          zIndex: 20,
 
+          color: '#ffffff',
+
+          background:
+            'rgba(15, 15, 20, 0.78)',
+
+          backdropFilter:
+            'blur(14px)',
+
+          WebkitBackdropFilter:
+            'blur(14px)',
+
+          padding: '14px 16px',
+
+          borderRadius: 18,
+
+          fontFamily:
+            'Arial, sans-serif',
+
+          border:
+            '1px solid rgba(255,255,255,0.12)',
+
+          pointerEvents: 'none',
+        }}
+      >
         <div
-          className="
-            text-lg
-            font-bold
-          "
+          style={{
+            fontSize: 22,
+            fontWeight: 700,
+          }}
         >
           Indoor Navigation
         </div>
 
-
         <div
-          className="
-            mt-1
-            text-sm
-            text-white/80
-          "
+          style={{
+            marginTop: 4,
+            fontSize: 14,
+            opacity: 0.85,
+          }}
         >
           {status}
         </div>
 
-
-        {/* VPS STATUS */}
-
-        {localized && (
-
-          <div
-            className="
-              mt-2
-              text-xs
-              text-green-400
-            "
-          >
-            ● VPS Localized
-          </div>
-
-        )}
-
-
-        {/* ERROR */}
-
         {error && (
-
           <div
-            className="
-              mt-3
-              break-words
-              rounded-lg
-              bg-red-500/20
-              p-2
-              text-xs
-              text-red-300
-            "
+            style={{
+              marginTop: 8,
+              color: '#ff7777',
+              fontSize: 12,
+              wordBreak: 'break-word',
+            }}
           >
             {error}
           </div>
-
         )}
-
       </div>
 
-
-      {/* ======================================================
-          DESTINATION / DISTANCE
-      ======================================================= */}
+      {/* =================================================
+          DISTANCE OVERLAY
+      ================================================= */}
 
       {selectedDestination &&
-        distance !== null &&
-        !destinationReached && (
-
+        distance !== null && (
           <div
-            className="
-              fixed
-              bottom-32
-              left-4
-              right-4
-              z-20
-              rounded-2xl
-              bg-black/75
-              px-5
-              py-4
-              backdrop-blur-md
-            "
+            style={{
+              position: 'fixed',
+
+              /*
+               * Bottom area but above the
+               * destination selector.
+               */
+              bottom: 92,
+
+              left: '50%',
+
+              transform:
+                'translateX(-50%)',
+
+              zIndex: 30,
+
+              minWidth: 180,
+
+              padding:
+                '12px 20px',
+
+              borderRadius: 18,
+
+              textAlign: 'center',
+
+              color: '#ffffff',
+
+              background:
+                'rgba(10,10,15,0.82)',
+
+              backdropFilter:
+                'blur(16px)',
+
+              WebkitBackdropFilter:
+                'blur(16px)',
+
+              border:
+                '1px solid rgba(255,255,255,0.14)',
+
+              boxShadow:
+                '0 10px 40px rgba(0,0,0,0.25)',
+
+              pointerEvents: 'none',
+            }}
           >
-
-            <div
-              className="
-                flex
-                items-center
-                justify-between
-              "
-            >
-
-              <div>
-
+            {reached ? (
+              <>
                 <div
-                  className="
-                    text-xs
-                    text-white/60
-                  "
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: '#c4b5fd',
+                  }}
                 >
-                  NAVIGATING TO
+                  Destination reached
                 </div>
 
-
                 <div
-                  className="
-                    mt-1
-                    text-lg
-                    font-bold
-                  "
+                  style={{
+                    marginTop: 3,
+                    fontSize: 13,
+                    opacity: 0.85,
+                  }}
                 >
                   {selectedDestination.name}
                 </div>
-
-              </div>
-
-
-              <div
-                className="
-                  text-right
-                "
-              >
-
+              </>
+            ) : (
+              <>
                 <div
-                  className="
-                    text-2xl
-                    font-bold
-                    text-violet-400
-                  "
+                  style={{
+                    fontSize: 12,
+                    opacity: 0.7,
+                  }}
                 >
-                  {distance.toFixed(1)} m
+                  Distance remaining
                 </div>
 
-
                 <div
-                  className="
-                    text-xs
-                    text-white/60
-                  "
+                  style={{
+                    marginTop: 2,
+                    fontSize: 24,
+                    fontWeight: 800,
+                  }}
                 >
-                  remaining
+                  {distance < 10
+                    ? distance.toFixed(1)
+                    : Math.round(distance)}{' '}
+                  m
                 </div>
 
-              </div>
-
-            </div>
-
+                <div
+                  style={{
+                    marginTop: 2,
+                    fontSize: 12,
+                    opacity: 0.7,
+                  }}
+                >
+                  →{' '}
+                  {
+                    selectedDestination.name
+                  }
+                </div>
+              </>
+            )}
           </div>
-
         )}
 
-
-      {/* ======================================================
-          DESTINATION REACHED
-      ======================================================= */}
-
-      {destinationReached &&
-        selectedDestination && (
-
-          <div
-            className="
-              fixed
-              bottom-32
-              left-4
-              right-4
-              z-30
-              rounded-2xl
-              bg-green-600/95
-              px-5
-              py-5
-              text-center
-              shadow-2xl
-              backdrop-blur
-            "
-          >
-
-            <div
-              className="
-                text-3xl
-                font-bold
-              "
-            >
-              ✓
-            </div>
-
-
-            <div
-              className="
-                mt-1
-                text-lg
-                font-bold
-              "
-            >
-              Destination Reached
-            </div>
-
-
-            <div
-              className="
-                mt-1
-                text-sm
-                text-white/90
-              "
-            >
-              You have reached{' '}
-              {selectedDestination.name}
-            </div>
-
-          </div>
-
-        )}
-
-
-      {/* ======================================================
+      {/* =================================================
           DESTINATION DRAWER
-      ======================================================= */}
+      ================================================= */}
 
       <div
-        className="
-          fixed
-          bottom-16
-          left-0
-          right-0
-          z-30
-          flex
-          justify-center
-          px-4
-        "
+        style={{
+          position: 'fixed',
+          bottom: 20,
+          left: 0,
+          right: 0,
+
+          display: 'flex',
+          justifyContent: 'center',
+
+          zIndex: 40,
+        }}
       >
-
         <DestinationDrawer
-
-          destinations={
-            destinations.map(
-              destination => ({
-                id:
-                  destination.id,
-
-                name:
-                  destination.name,
-              })
-            )
-          }
-
-          selectedId={
-            selectedId
-          }
-
-          disabled={
-            !localized
-          }
-
+          destinations={DESTINATIONS}
+          selectedId={selectedId}
+          disabled={false}
           onSelect={
             handleDestinationSelect
           }
-
         />
-
       </div>
-
     </main>
   )
+}
+
+/* =========================================================
+   CANVAS ROUND RECT HELPER
+========================================================= */
+
+function roundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) {
+  context.beginPath()
+
+  context.moveTo(
+    x + radius,
+    y
+  )
+
+  context.lineTo(
+    x + width - radius,
+    y
+  )
+
+  context.quadraticCurveTo(
+    x + width,
+    y,
+    x + width,
+    y + radius
+  )
+
+  context.lineTo(
+    x + width,
+    y + height - radius
+  )
+
+  context.quadraticCurveTo(
+    x + width,
+    y + height,
+    x + width - radius,
+    y + height
+  )
+
+  context.lineTo(
+    x + radius,
+    y + height
+  )
+
+  context.quadraticCurveTo(
+    x,
+    y + height,
+    x,
+    y + height - radius
+  )
+
+  context.lineTo(
+    x,
+    y + radius
+  )
+
+  context.quadraticCurveTo(
+    x,
+    y,
+    x + radius,
+    y
+  )
+
+  context.closePath()
 }

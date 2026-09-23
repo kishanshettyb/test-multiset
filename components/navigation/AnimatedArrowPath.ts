@@ -4,76 +4,92 @@ export interface ArrowPathOptions {
   color?: number
   arrowCount?: number
   spacing?: number
-  groundY?: number
-
-  // Distance between the two side lines
+  groundOffset?: number
   pathWidth?: number
-
-  // Arrow size
   arrowWidth?: number
   arrowLength?: number
-
-  // Animation
   animationSpeed?: number
-  animationDistance?: number
+  railOpacity?: number
+  arrowOpacity?: number
 }
 
 export class AnimatedArrowPath {
   public group: THREE.Group
 
   private arrows: THREE.Group[] = []
-
   private arrowMaterials: THREE.MeshBasicMaterial[] = []
 
-  private clock = new THREE.Clock()
+  private leftRail: THREE.Line | null = null
+  private rightRail: THREE.Line | null = null
 
-  private pathLineLeft: THREE.Line | null = null
-  private pathLineRight: THREE.Line | null = null
+  private clock = new THREE.Clock()
 
   private color: number
   private arrowCount: number
   private spacing: number
-  private groundY: number
-
+  private groundOffset: number
   private pathWidth: number
   private arrowWidth: number
   private arrowLength: number
-
   private animationSpeed: number
-  private animationDistance: number
+  private railOpacity: number
+  private arrowOpacity: number
 
   constructor(options: ArrowPathOptions = {}) {
     this.group = new THREE.Group()
 
     this.color = options.color ?? 0x8b7cff
 
-    this.arrowCount = options.arrowCount ?? 12
+    this.arrowCount = options.arrowCount ?? 16
 
-    this.spacing = options.spacing ?? 0.7
+    this.spacing = options.spacing ?? 0.65
 
-    this.groundY = options.groundY ?? 0
+    // Very small offset above floor.
+    // Prevents z-fighting without making arrows look elevated.
+    this.groundOffset =
+      options.groundOffset ?? 0.012
 
-    this.pathWidth = options.pathWidth ?? 0.9
+    this.pathWidth =
+      options.pathWidth ?? 0.95
 
-    this.arrowWidth = options.arrowWidth ?? 0.42
+    this.arrowWidth =
+      options.arrowWidth ?? 0.42
 
-    this.arrowLength = options.arrowLength ?? 0.55
+    this.arrowLength =
+      options.arrowLength ?? 0.55
 
-    this.animationSpeed = options.animationSpeed ?? 0.8
+    this.animationSpeed =
+      options.animationSpeed ?? 0.9
 
-    this.animationDistance =
-      options.animationDistance ?? 0.18
+    this.railOpacity =
+      options.railOpacity ?? 0.55
+
+    this.arrowOpacity =
+      options.arrowOpacity ?? 0.95
 
     this.createArrows()
   }
 
   /**
-   * Create the animated arrow sequence.
+   * Creates all animated arrows.
+   *
+   * IMPORTANT:
+   *
+   * Local +Z is ALWAYS the destination direction.
+   *
+   * The complete group is rotated in setPath()
+   * so +Z points toward the destination.
    */
   private createArrows() {
     for (let i = 0; i < this.arrowCount; i++) {
       const arrow = this.createArrow()
 
+      /*
+       * First arrow starts at the user.
+       *
+       * Every following arrow is placed
+       * toward +Z.
+       */
       arrow.position.set(
         0,
         0,
@@ -87,154 +103,176 @@ export class AnimatedArrowPath {
   }
 
   /**
-   * Creates a flat chevron directly in X/Z.
+   * Creates one flat arrow on the X/Z floor plane.
    *
-   * IMPORTANT:
-   * +Z = destination direction.
+   * Arrow direction:
    *
-   * This avoids the ShapeGeometry rotation
-   * problem that was reversing your arrows.
+   *             TIP
+   *              ↑
+   *             / \
+   *            /   \
+   *           /     \
+   *
+   *              +Z
    */
   private createArrow(): THREE.Group {
     const group = new THREE.Group()
 
-    const w = this.arrowWidth
-    const l = this.arrowLength
+    const width = this.arrowWidth
+    const length = this.arrowLength
 
-    const geometry = new THREE.BufferGeometry()
-
-    /**
-     * Chevron shape.
+    /*
+     * We create the arrow directly on the X/Z plane.
      *
-     *               +Z
-     *                ^
+     * Y is always 0.
      *
-     *              tip
-     *               /\
-     *              /  \
-     *             /    \
-     *            /      \
-     *
-     *       <-- back of arrow -->
-     *
-     * Sharp point is +Z.
+     * Therefore this geometry does NOT need
+     * an X rotation.
      */
 
-    const vertices = new Float32Array([
-      // left wing
-      -w,
-      0,
-      0,
+    const shape = new THREE.Shape()
 
-      // tip
-      0,
-      0,
-      l,
-
-      // right wing
-      w,
-      0,
-      0,
-
-      // inner left
-      -w * 0.48,
-      0,
-      0,
-
-      // inner tip
-      0,
-      0,
-      l * 0.58,
-
-      // inner right
-      w * 0.48,
-      0,
-      0,
-    ])
-
-    geometry.setAttribute(
-      'position',
-      new THREE.BufferAttribute(vertices, 3)
+    /*
+     * Arrow starts at the back.
+     */
+    shape.moveTo(
+      -width * 0.30,
+      0
     )
 
-    geometry.setIndex([
+    /*
+     * Left side of arrow body.
+     */
+    shape.lineTo(
+      -width * 0.30,
+      length * 0.42
+    )
+
+    /*
+     * Left side of arrow head.
+     */
+    shape.lineTo(
+      -width,
+      length * 0.42
+    )
+
+    /*
+     * SHARP TIP.
+     *
+     * This is +Z.
+     */
+    shape.lineTo(
       0,
-      1,
-      3,
+      length
+    )
 
-      3,
-      1,
-      4,
+    /*
+     * Right side of arrow head.
+     */
+    shape.lineTo(
+      width,
+      length * 0.42
+    )
 
-      3,
-      4,
-      5,
+    /*
+     * Right side of arrow body.
+     */
+    shape.lineTo(
+      width * 0.30,
+      length * 0.42
+    )
 
-      5,
-      4,
-      2,
+    /*
+     * Back to starting point.
+     */
+    shape.lineTo(
+      width * 0.30,
+      0
+    )
 
-      2,
-      4,
-      1,
-    ])
+    shape.closePath()
 
-    geometry.computeVertexNormals()
+    /*
+     * ShapeGeometry is created in XY.
+     *
+     * We rotate it onto the floor:
+     *
+     * Three.js:
+     *
+     * X = horizontal
+     * Y = vertical
+     * Z = depth
+     *
+     * After rotation:
+     *
+     * X/Z = floor
+     * Y   = height
+     */
+    const geometry =
+      new THREE.ShapeGeometry(shape)
+
+    geometry.rotateX(
+      -Math.PI / 2
+    )
 
     const material =
       new THREE.MeshBasicMaterial({
         color: this.color,
         transparent: true,
-        opacity: 0.9,
+        opacity: this.arrowOpacity,
+
         side: THREE.DoubleSide,
 
-        /**
-         * Prevent the arrow from writing depth
-         * and causing ugly floor conflicts.
+        /*
+         * Prevents the arrow from writing
+         * into the depth buffer.
          */
         depthWrite: false,
 
+        /*
+         * Still allows the real floor
+         * to occlude the arrow.
+         */
         depthTest: true,
       })
 
-    const mesh = new THREE.Mesh(
-      geometry,
-      material
-    )
+    const mesh =
+      new THREE.Mesh(
+        geometry,
+        material
+      )
 
-    /**
-     * IMPORTANT:
+    /*
+     * VERY IMPORTANT:
      *
-     * The arrow is already created in X/Z.
-     *
-     * Therefore:
-     *
-     * X = horizontal
-     * Y = height
-     * Z = navigation direction
-     *
-     * NO rotation.x is required.
+     * The arrow itself is only slightly
+     * above the floor.
      */
-
-    mesh.position.y = 0.025
+    mesh.position.y =
+      this.groundOffset
 
     group.add(mesh)
 
-    this.arrowMaterials.push(material)
+    this.arrowMaterials.push(
+      material
+    )
 
     return group
   }
 
   /**
-   * Set the complete navigation path.
+   * Sets the navigation path.
    *
-   * start = user's current map position
+   * start = user's current position
    * end   = selected destination
    */
   public setPath(
     start: THREE.Vector3,
     end: THREE.Vector3
   ) {
+    /*
+     * Calculate horizontal direction.
+     */
     const direction =
       new THREE.Vector3()
 
@@ -243,13 +281,17 @@ export class AnimatedArrowPath {
       start
     )
 
-    /**
-     * Indoor walking happens on X/Z.
-     *
+    /*
      * Ignore vertical difference.
+     *
+     * Indoor walking navigation
+     * should stay on the floor.
      */
     direction.y = 0
 
+    /*
+     * No valid path.
+     */
     if (
       direction.lengthSq() <
       0.000001
@@ -259,21 +301,20 @@ export class AnimatedArrowPath {
 
     direction.normalize()
 
-    /**
-     * Position path exactly at user's
-     * current ground position.
+    /*
+     * Put the complete navigation
+     * system exactly where the user is.
      */
     this.group.position.set(
       start.x,
-      this.groundY,
+      start.y,
       start.z
     )
 
-    /**
-     * +Z of our arrow geometry must point
-     * toward destination.
+    /*
+     * +Z is our arrow direction.
      *
-     * atan2(X, Z) gives exactly that.
+     * Rotate +Z toward destination.
      */
     this.group.rotation.y =
       Math.atan2(
@@ -281,143 +322,161 @@ export class AnimatedArrowPath {
         direction.z
       )
 
-    /**
-     * Build side boundary lines.
+    /*
+     * Recreate the two side borders.
      */
-    this.createSideLines()
+    this.createSideRails()
   }
 
   /**
-   * Creates the two thin navigation rails
-   * visible in your reference video.
+   * Creates the two blue/purple navigation
+   * border lines.
+   *
+   * They run parallel to the arrows.
    */
-  private createSideLines() {
-    /**
-     * Remove old lines.
+  private createSideRails() {
+    /*
+     * Remove old rails.
      */
-    if (this.pathLineLeft) {
-      this.group.remove(
-        this.pathLineLeft
+    if (this.leftRail) {
+      this.disposeRail(
+        this.leftRail
       )
 
-      this.pathLineLeft.geometry.dispose()
+      this.group.remove(
+        this.leftRail
+      )
 
-      ;(
-        this.pathLineLeft
-          .material as THREE.Material
-      ).dispose()
+      this.leftRail = null
     }
 
-    if (this.pathLineRight) {
-      this.group.remove(
-        this.pathLineRight
+    if (this.rightRail) {
+      this.disposeRail(
+        this.rightRail
       )
 
-      this.pathLineRight.geometry.dispose()
+      this.group.remove(
+        this.rightRail
+      )
 
-      ;(
-        this.pathLineRight
-          .material as THREE.Material
-      ).dispose()
+      this.rightRail = null
     }
 
-    /**
-     * Path length.
+    /*
+     * Make the rails slightly longer
+     * than the arrow sequence.
      */
-    const pathLength =
-      Math.max(
-        5,
-        this.arrowCount *
-          this.spacing +
-          0.8
-      )
+    const length =
+      (this.arrowCount - 1) *
+        this.spacing +
+      this.arrowLength
 
-    /**
-     * Left and right X coordinates.
-     */
     const halfWidth =
       this.pathWidth / 2
 
-    /**
-     * LEFT LINE
+    /*
+     * Rails are also placed almost
+     * exactly on the floor.
      */
-    const leftPoints = [
+    const railY =
+      this.groundOffset * 0.7
+
+    /*
+     * LEFT RAIL
+     */
+    const leftGeometry =
+      new THREE.BufferGeometry()
+
+    leftGeometry.setFromPoints([
       new THREE.Vector3(
         -halfWidth,
-        0.018,
+        railY,
         0
       ),
 
       new THREE.Vector3(
         -halfWidth,
-        0.018,
-        pathLength
+        railY,
+        length
       ),
-    ]
+    ])
 
-    /**
-     * RIGHT LINE
-     */
-    const rightPoints = [
-      new THREE.Vector3(
-        halfWidth,
-        0.018,
-        0
-      ),
-
-      new THREE.Vector3(
-        halfWidth,
-        0.018,
-        pathLength
-      ),
-    ]
-
-    this.pathLineLeft =
-      this.createLine(leftPoints)
-
-    this.pathLineRight =
-      this.createLine(rightPoints)
-
-    this.group.add(
-      this.pathLineLeft
-    )
-
-    this.group.add(
-      this.pathLineRight
-    )
-  }
-
-  /**
-   * Create one thin path line.
-   */
-  private createLine(
-    points: THREE.Vector3[]
-  ) {
-    const geometry =
-      new THREE.BufferGeometry().setFromPoints(
-        points
-      )
-
-    const material =
+    const leftMaterial =
       new THREE.LineBasicMaterial({
         color: this.color,
-
         transparent: true,
+        opacity: this.railOpacity,
 
-        opacity: 0.65,
+        depthWrite: false,
+        depthTest: true,
       })
 
-    const line =
+    this.leftRail =
       new THREE.Line(
-        geometry,
-        material
+        leftGeometry,
+        leftMaterial
       )
 
-    return line
+    this.leftRail.userData.navigationRail =
+      true
+
+    /*
+     * RIGHT RAIL
+     */
+    const rightGeometry =
+      new THREE.BufferGeometry()
+
+    rightGeometry.setFromPoints([
+      new THREE.Vector3(
+        halfWidth,
+        railY,
+        0
+      ),
+
+      new THREE.Vector3(
+        halfWidth,
+        railY,
+        length
+      ),
+    ])
+
+    const rightMaterial =
+      new THREE.LineBasicMaterial({
+        color: this.color,
+        transparent: true,
+        opacity: this.railOpacity,
+
+        depthWrite: false,
+        depthTest: true,
+      })
+
+    this.rightRail =
+      new THREE.Line(
+        rightGeometry,
+        rightMaterial
+      )
+
+    this.rightRail.userData.navigationRail =
+      true
+
+    /*
+     * Add rails to navigation group.
+     */
+    this.group.add(
+      this.leftRail
+    )
+
+    this.group.add(
+      this.rightRail
+    )
   }
 
   /**
-   * Update animation every XR frame.
+   * Updates the arrow animation.
+   *
+   * Arrows move FORWARD toward +Z.
+   *
+   * They NEVER move vertically.
    */
   public update() {
     const elapsed =
@@ -425,11 +484,11 @@ export class AnimatedArrowPath {
 
     this.arrows.forEach(
       (arrow, index) => {
-        /**
-         * Create a travelling wave.
+        /*
+         * Create flowing animation.
          *
-         * Each arrow gets a slightly different
-         * animation phase.
+         * Each arrow has a small delay
+         * from the previous arrow.
          */
         const progress =
           (
@@ -438,70 +497,77 @@ export class AnimatedArrowPath {
             index * 0.18
           ) % 1
 
-        /**
-         * Animate arrows slightly toward
-         * destination (+Z).
+        /*
+         * Base position of this arrow.
          */
         const baseZ =
           index * this.spacing
 
+        /*
+         * Move arrow slightly forward.
+         *
+         * This creates the flowing
+         * navigation effect.
+         */
         arrow.position.z =
           baseZ +
-          progress *
-            this.animationDistance
+          progress * 0.22
 
-        /**
+        /*
+         * NEVER change Y.
+         *
+         * This guarantees that the
+         * arrow stays on the floor.
+         */
+        arrow.position.y = 0
+
+        /*
          * Fade animation.
          */
         const material =
           this.arrowMaterials[index]
 
         material.opacity =
-          0.35 +
-          (1 - progress) * 0.55
+          0.30 +
+          (1 - progress) *
+            0.65
 
-        /**
-         * Very subtle scale animation.
+        /*
+         * Very subtle scale pulse.
+         *
+         * No vertical movement.
          */
         const scale =
-          0.92 +
+          0.94 +
           Math.sin(
             progress * Math.PI
           ) *
-            0.12
+            0.06
 
-        arrow.scale.set(
-          scale,
-          scale,
+        arrow.scale.setScalar(
           scale
         )
-
-        /**
-         * IMPORTANT:
-         *
-         * Never change Y.
-         *
-         * This keeps the arrow on the floor.
-         */
-        arrow.position.y = 0
       }
     )
   }
 
   /**
-   * Change floor height.
-   */
-  public setGroundY(
-    groundY: number
-  ) {
-    this.groundY = groundY
+ * Update the floor height.
+ *
+ * Use this when MultiSet/map coordinates
+ * require a specific Y value for the navigation path.
+ */
+public setGroundY(groundY: number) {
+  this.group.position.y = groundY
 
-    this.group.position.y =
-      groundY
-  }
+  // Keep all arrows at the floor.
+  this.arrows.forEach((arrow) => {
+    arrow.position.y = 0
+  })
+}
 
   /**
-   * Hide/show path.
+   * Show / hide navigation.
    */
   public setVisible(
     visible: boolean
@@ -511,21 +577,56 @@ export class AnimatedArrowPath {
   }
 
   /**
-   * Clean everything.
+   * Change arrow color.
+   */
+  public setColor(
+    color: number
+  ) {
+    this.color = color
+
+    this.arrowMaterials.forEach(
+      material => {
+        material.color.setHex(
+          color
+        )
+      }
+    )
+
+    if (this.leftRail) {
+      ;(
+        this.leftRail.material as THREE.LineBasicMaterial
+      ).color.setHex(color)
+    }
+
+    if (this.rightRail) {
+      ;(
+        this.rightRail.material as THREE.LineBasicMaterial
+      ).color.setHex(color)
+    }
+  }
+
+  /**
+   * Dispose all Three.js resources.
    */
   public dispose() {
+    /*
+     * Dispose arrows.
+     */
     this.arrows.forEach(
       arrow => {
         const mesh =
           arrow.children[0] as THREE.Mesh
 
-        if (mesh) {
-          mesh.geometry.dispose()
-
-          ;(
-            mesh.material as THREE.Material
-          ).dispose()
+        if (!mesh) {
+          return
         }
+
+        mesh.geometry.dispose()
+
+        const material =
+          mesh.material as THREE.Material
+
+        material.dispose()
       }
     )
 
@@ -533,32 +634,49 @@ export class AnimatedArrowPath {
 
     this.arrowMaterials = []
 
-    if (this.pathLineLeft) {
-      this.pathLineLeft.geometry.dispose()
+    /*
+     * Dispose left rail.
+     */
+    if (this.leftRail) {
+      this.disposeRail(
+        this.leftRail
+      )
 
-      ;(
-        this.pathLineLeft
-          .material as THREE.Material
-      ).dispose()
+      this.leftRail = null
     }
 
-    if (this.pathLineRight) {
-      this.pathLineRight.geometry.dispose()
+    /*
+     * Dispose right rail.
+     */
+    if (this.rightRail) {
+      this.disposeRail(
+        this.rightRail
+      )
 
-      ;(
-        this.pathLineRight
-          .material as THREE.Material
-      ).dispose()
+      this.rightRail = null
     }
 
-    this.pathLineLeft = null
-
-    this.pathLineRight = null
-
+    /*
+     * Remove group from scene.
+     */
     if (this.group.parent) {
       this.group.parent.remove(
         this.group
       )
     }
+  }
+
+  /**
+   * Dispose one rail.
+   */
+  private disposeRail(
+    rail: THREE.Line
+  ) {
+    rail.geometry.dispose()
+
+    const material =
+      rail.material as THREE.Material
+
+    material.dispose()
   }
 }
