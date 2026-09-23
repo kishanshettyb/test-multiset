@@ -13,39 +13,66 @@ type Destination = {
 
 const destinations: Destination[] = [
   {
-    id: 'lift',
-    name: 'Lift',
+    id: 'cabin-1',
+    name: 'Cabin 1',
     position: new THREE.Vector3(
-      -0.152,
-      -0.135,
-      0.685
+      4.355,
+      -1.071,
+      2.215
     ),
   },
   {
-    id: 'reception',
-    name: 'Reception',
+    id: 'cabin-2',
+    name: 'Cabin 2',
     position: new THREE.Vector3(
-      0.636,
-      0.085,
-      5.557
+      8.995,
+      -1.109,
+      2.241
     ),
   },
   {
-    id: 'entrance',
-    name: 'Entrance',
+    id: 'meeting-room',
+    name: 'Meeting Room',
     position: new THREE.Vector3(
-      0.869,
-      -0.032,
-      3.022
+      12.398,
+      -0.622,
+      2.274
     ),
   },
   {
-    id: 'seating',
-    name: 'Seating',
+    id: 'lobby',
+    name: 'Lobby',
     position: new THREE.Vector3(
-      1.925,
-      0.204,
-      4.881
+      0.881,
+      -1.947,
+      -1.917
+    ),
+  },
+  {
+    id: 'panetry',
+    name: 'Panetry',
+    position: new THREE.Vector3(
+      1.143,
+      -1.238,
+      7.950
+    ),
+  },
+  {
+    id: 'restroom',
+    name: 'Restroom',
+    position: new THREE.Vector3(
+      -0.902,
+      -1.385,
+      7.157
+    ),
+  },
+  {
+    id: 'entrance-door',
+    name: 'Entrance Door',
+    position: new THREE.Vector3(
+      -1.039,
+      -1.388,
+      1.468
     ),
   },
 ]
