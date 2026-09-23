@@ -79,15 +79,11 @@ const destinations: Destination[] = [
 
 export default function NavigatePage() {
   const containerRef = useRef<HTMLDivElement>(null)
-
   const adapterRef = useRef<ThreeAdapter | null>(null)
   const mapSpaceRef = useRef<MapSpace | null>(null)
-
   const markerRef = useRef<THREE.Group | null>(null)
-
   const [status, setStatus] = useState('Initializing...')
   const [error, setError] = useState('')
-
   const [localized, setLocalized] = useState(false)
 
   const [selectedDestination, setSelectedDestination] =
