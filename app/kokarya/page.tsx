@@ -141,7 +141,7 @@ export default function NavigatePage() {
   const [localized, setLocalized] = useState(false)
 
   const [selectedDestination, setSelectedDestination] =
-    useState('lift')
+    useState('entrance')
 
   useEffect(() => {
     let disposed = false
