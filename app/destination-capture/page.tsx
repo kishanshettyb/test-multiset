@@ -1,27 +1,40 @@
-'use client'
+"use client";
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import * as THREE from 'three'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import * as THREE from "three";
 
 import {
   MultisetClient,
   XRSessionManager,
-} from '@multisetai/vps/core'
+} from "@multisetai/vps/core";
 
-import {
-  MapSpace,
-  ThreeAdapter,
-} from '@multisetai/vps/three'
+import { ThreeAdapter } from "@multisetai/vps/three";
 
 type Destination = {
-  id: string
-  name: string
+  id: string;
+  name: string;
   position: {
-    x: number
-    y: number
-    z: number
-  }
-}
+    x: number;
+    y: number;
+    z: number;
+  };
+};
+
+const MAP_CODE =
+  process.env.NEXT_PUBLIC_MULTISET_MAP_CODE ?? "";
+
+const CLIENT_ID =
+  process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID ?? "";
+
+const CLIENT_SECRET =
+  process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET ?? "";
 
 export default function DestinationCapturePage() {
   // =========================================================
@@ -29,68 +42,70 @@ export default function DestinationCapturePage() {
   // =========================================================
 
   const containerRef =
-    useRef<HTMLDivElement | null>(null)
+    useRef<HTMLDivElement | null>(null);
 
   // =========================================================
   // THREE
   // =========================================================
 
   const rendererRef =
-    useRef<THREE.WebGLRenderer | null>(null)
+    useRef<THREE.WebGLRenderer | null>(null);
 
   const sceneRef =
-    useRef<THREE.Scene | null>(null)
+    useRef<THREE.Scene | null>(null);
 
   const cameraRef =
-    useRef<THREE.PerspectiveCamera | null>(null)
+    useRef<THREE.PerspectiveCamera | null>(null);
 
   // =========================================================
   // MULTISET
   // =========================================================
 
   const adapterRef =
-    useRef<ThreeAdapter | null>(null)
+    useRef<ThreeAdapter | null>(null);
 
-  const mapSpaceRef =
-    useRef<MapSpace | null>(null)
+  const sessionRef =
+    useRef<XRSessionManager | null>(null);
 
+  // MAP -> WORLD
   const worldFromMapRef =
-    useRef<THREE.Matrix4 | null>(null)
+    useRef<THREE.Matrix4 | null>(null);
 
-  // =========================================================
-  // CURRENT MAP POSITION
-  // =========================================================
-
+  // Current camera position in MAP coordinates
   const currentMapPositionRef =
-    useRef<THREE.Vector3 | null>(null)
+    useRef<THREE.Vector3 | null>(null);
 
-  const lastPositionUpdateRef =
-    useRef(0)
+  const lastUiUpdateRef =
+    useRef(0);
 
   // =========================================================
-  // STATE
+  // UI STATE
   // =========================================================
 
   const [status, setStatus] =
-    useState('Initializing...')
-
-  const [error, setError] =
-    useState('')
+    useState("Initializing...");
 
   const [localized, setLocalized] =
-    useState(false)
+    useState(false);
 
   const [destinationName, setDestinationName] =
-    useState('')
+    useState("");
 
   const [currentPosition, setCurrentPosition] =
-    useState<Destination['position'] | null>(null)
+    useState<{
+      x: number;
+      y: number;
+      z: number;
+    } | null>(null);
 
   const [destinations, setDestinations] =
-    useState<Destination[]>([])
+    useState<Destination[]>([]);
+
+  const [error, setError] =
+    useState("");
 
   // =========================================================
-  // CREATE ID
+  // CREATE DESTINATION ID
   // =========================================================
 
   const createId = useCallback(
@@ -98,53 +113,62 @@ export default function DestinationCapturePage() {
       return name
         .trim()
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
     },
     []
-  )
+  );
 
   // =========================================================
-  // CAPTURE DESTINATION
+  // GENERATED DESTINATION CODE
   // =========================================================
 
-  const captureDestination = useCallback(() => {
-    if (!localized) {
-      alert(
-        'Please wait until MultiSet is localized.'
-      )
-
-      return
+  const generatedCode = useMemo(() => {
+    if (destinations.length === 0) {
+      return `const DESTINATIONS: Destination[] = [];`;
     }
 
-    const name =
-      destinationName.trim()
+    const items = destinations
+      .map((destination) => {
+        const safeName =
+          destination.name.replace(
+            /'/g,
+            "\\'"
+          );
 
-    if (!name) {
-      alert(
-        'Enter destination name.'
-      )
+        return `  {
+    id: '${destination.id}',
+    name: '${safeName}',
+    position: new THREE.Vector3(
+      ${destination.position.x},
+      ${destination.position.y},
+      ${destination.position.z}
+    ),
+  }`;
+      })
+      .join(",\n\n");
 
-      return
-    }
+    return `const DESTINATIONS: Destination[] = [
 
-    const position =
-      currentMapPositionRef.current
+${items}
 
-    if (!position) {
-      alert(
-        'Current map position is not available.'
-      )
+];`;
+  }, [destinations]);
 
-      return
-    }
+  // =========================================================
+  // CURRENT MAP POSITION
+  // =========================================================
 
-    const destination: Destination = {
-      id: createId(name),
+  const getCurrentMapPosition =
+    useCallback(() => {
+      const position =
+        currentMapPositionRef.current;
 
-      name,
+      if (!position) {
+        return null;
+      }
 
-      position: {
+      return {
         x: Number(
           position.x.toFixed(3)
         ),
@@ -156,51 +180,97 @@ export default function DestinationCapturePage() {
         z: Number(
           position.z.toFixed(3)
         ),
-      },
-    }
+      };
+    }, []);
 
-    setDestinations(
-      previous => {
-        const existingIndex =
-          previous.findIndex(
-            item =>
-              item.id ===
-              destination.id
-          )
+  // =========================================================
+  // CAPTURE DESTINATION
+  // =========================================================
 
-        // Update if same ID exists
-        if (
-          existingIndex !== -1
-        ) {
-          const updated = [
-            ...previous,
-          ]
+  const captureDestination =
+    useCallback(() => {
+      if (!localized) {
+        alert(
+          "Please wait until MultiSet is localized."
+        );
 
-          updated[existingIndex] =
-            destination
-
-          return updated
-        }
-
-        // Add new destination
-        return [
-          ...previous,
-          destination,
-        ]
+        return;
       }
-    )
 
-    setDestinationName('')
+      const name =
+        destinationName.trim();
 
-    console.log(
-      '[Destination Capture]',
-      destination
-    )
-  }, [
-    localized,
-    destinationName,
-    createId,
-  ])
+      if (!name) {
+        alert(
+          "Enter destination name."
+        );
+
+        return;
+      }
+
+      const position =
+        getCurrentMapPosition();
+
+      if (!position) {
+        alert(
+          "Current map position is not available."
+        );
+
+        return;
+      }
+
+      const destination: Destination = {
+        id: createId(name),
+
+        name,
+
+        position,
+      };
+
+      console.log(
+        "DESTINATION CAPTURED:",
+        destination
+      );
+
+      setDestinations(
+        (previous) => {
+          const existingIndex =
+            previous.findIndex(
+              (item) =>
+                item.id ===
+                destination.id
+            );
+
+          // Update existing destination
+          if (
+            existingIndex !== -1
+          ) {
+            const updated = [
+              ...previous,
+            ];
+
+            updated[
+              existingIndex
+            ] = destination;
+
+            return updated;
+          }
+
+          // Add new destination
+          return [
+            ...previous,
+            destination,
+          ];
+        }
+      );
+
+      setDestinationName("");
+    }, [
+      localized,
+      destinationName,
+      getCurrentMapPosition,
+      createId,
+    ]);
 
   // =========================================================
   // DELETE
@@ -210,767 +280,586 @@ export default function DestinationCapturePage() {
     useCallback(
       (id: string) => {
         setDestinations(
-          previous =>
+          (previous) =>
             previous.filter(
-              item =>
+              (item) =>
                 item.id !== id
             )
-        )
+        );
       },
       []
-    )
+    );
 
   // =========================================================
-  // CLEAR ALL
-  // =========================================================
-
-  const clearAll =
-    useCallback(() => {
-      if (
-        destinations.length === 0
-      ) {
-        return
-      }
-
-      if (
-        !window.confirm(
-          'Clear all destinations?'
-        )
-      ) {
-        return
-      }
-
-      setDestinations([])
-    }, [destinations.length])
-
-  // =========================================================
-  // GENERATED CODE
-  // =========================================================
-
-  const generateCode = useCallback(() => {
-    const lines =
-      destinations.map(
-        destination => {
-          return `  {
-    id: '${destination.id}',
-    name: '${destination.name.replace(
-      /'/g,
-      "\\'"
-    )}',
-    position: new THREE.Vector3(
-      ${destination.position.x},
-      ${destination.position.y},
-      ${destination.position.z}
-    ),
-  }`
-        }
-      )
-
-    if (
-      lines.length === 0
-    ) {
-      return `const DESTINATIONS: Destination[] = [];`
-    }
-
-    return `const DESTINATIONS: Destination[] = [
-
-${lines.join(',\n\n')}
-
-];`
-  }, [destinations])
-
-  // =========================================================
-  // COPY CODE
+  // COPY JSON / CODE
   // =========================================================
 
   const copyCode =
     useCallback(async () => {
-      const code =
-        generateCode()
-
       try {
         await navigator.clipboard.writeText(
-          code
-        )
+          generatedCode
+        );
 
         alert(
-          'Destination code copied.'
-        )
-      } catch (err) {
+          "DESTINATIONS code copied."
+        );
+      } catch (error) {
         console.error(
-          'Copy failed:',
-          err
-        )
+          "Clipboard error:",
+          error
+        );
 
         alert(
-          'Copy failed. Please copy manually.'
-        )
+          "Unable to copy. Please copy manually."
+        );
       }
-    }, [generateCode])
+    }, [generatedCode]);
 
   // =========================================================
-  // MULTISET INITIALIZATION
+  // INITIALIZE MULTISET
   // =========================================================
 
   useEffect(() => {
-    let disposed = false
+    let disposed = false;
 
     let resizeHandler:
       | (() => void)
-      | null = null
-
-    let animationFrameId:
-      | number
-      | null = null
-
-    const init = async () => {
-      try {
-        // -----------------------------------------------------
-        // 1. CHECK CONTAINER
-        // -----------------------------------------------------
-
-        if (
-          !containerRef.current
-        ) {
-          return
-        }
-
-        // -----------------------------------------------------
-        // 2. CHECK WEBXR
-        // -----------------------------------------------------
-
-        setStatus(
-          'Checking WebXR...'
-        )
-
-        const supported =
-          await ThreeAdapter.isSupported()
-
-        if (!supported) {
-          throw new Error(
-            'WebXR immersive AR is not supported on this device/browser.'
-          )
-        }
-
-        // -----------------------------------------------------
-        // 3. ENVIRONMENT
-        // -----------------------------------------------------
-
-        const clientId =
-          process.env
-            .NEXT_PUBLIC_MULTISET_CLIENT_ID
-
-        const clientSecret =
-          process.env
-            .NEXT_PUBLIC_MULTISET_CLIENT_SECRET
-
-        const mapCode =
-          process.env
-            .NEXT_PUBLIC_MULTISET_MAP_CODE
-
-        if (
-          !clientId ||
-          !clientSecret ||
-          !mapCode
-        ) {
-          throw new Error(
-            'Missing MultiSet environment variables.'
-          )
-        }
-
-        console.log(
-          '[Destination Capture] Map:',
-          mapCode
-        )
-
-        // -----------------------------------------------------
-        // 4. MULTISET CLIENT
-        // -----------------------------------------------------
-
-        setStatus(
-          'Authorizing MultiSet...'
-        )
-
-        const client =
-          new MultisetClient({
-            clientId,
-
-            clientSecret,
-
-            mapType: 'map',
-
-            code: mapCode,
-          })
-
-        await client.authorize()
-
-        if (disposed) {
-          return
-        }
-
-        console.log(
-          '[Destination Capture] MultiSet authorized'
-        )
-
-        // -----------------------------------------------------
-        // 5. THREE RENDERER
-        // -----------------------------------------------------
-
-        setStatus(
-          'Creating AR renderer...'
-        )
-
-        const renderer =
-          new THREE.WebGLRenderer({
-            antialias: true,
-            alpha: true,
-          })
-
-        renderer.setPixelRatio(
-          Math.min(
-            window.devicePixelRatio,
-            2
-          )
-        )
-
-        renderer.setSize(
-          window.innerWidth,
-          window.innerHeight
-        )
-
-        // IMPORTANT
-        renderer.xr.enabled = true
-
-        // IMPORTANT
-        renderer.setClearColor(
-          0x000000,
-          0
-        )
-
-        renderer.domElement.style.position =
-          'fixed'
-
-        renderer.domElement.style.left =
-          '0'
-
-        renderer.domElement.style.top =
-          '0'
-
-        renderer.domElement.style.width =
-          '100%'
-
-        renderer.domElement.style.height =
-          '100%'
-
-        renderer.domElement.style.zIndex =
-          '0'
-
-        containerRef.current.appendChild(
-          renderer.domElement
-        )
-
-        rendererRef.current =
-          renderer
-
-        // -----------------------------------------------------
-        // 6. SCENE
-        // -----------------------------------------------------
-
-        const scene =
-          new THREE.Scene()
-
-        // IMPORTANT
-        scene.background = null
-
-        sceneRef.current =
-          scene
-
-        // -----------------------------------------------------
-        // 7. CAMERA
-        // -----------------------------------------------------
-
-        const camera =
-          new THREE.PerspectiveCamera(
-            70,
-
-            window.innerWidth /
-              window.innerHeight,
-
-            0.01,
-
-            1000
-          )
-
-        camera.position.set(
-          0,
-          0,
-          0
-        )
-
-        scene.add(camera)
-
-        cameraRef.current =
-          camera
-
-        // -----------------------------------------------------
-        // 8. XR SESSION
-        // -----------------------------------------------------
-
-        setStatus(
-          'Creating XR session...'
-        )
-
-        const session =
-          new XRSessionManager(
-            renderer.getContext() as WebGL2RenderingContext,
-            {
-              client,
-
-              autoLocalize: true,
-
-              referenceSpaceType:
-                'local',
-
-              confidenceCheck:
-                true,
-
-              confidenceThreshold:
-                0.5,
-
-              onSessionStart: () => {
-                console.log(
-                  '[Destination Capture] XR SESSION STARTED'
-                )
-
-                setStatus(
-                  'AR session started'
-                )
-              },
-
-              onSessionEnd: () => {
-                console.log(
-                  '[Destination Capture] XR SESSION ENDED'
-                )
-
-                setStatus(
-                  'AR session ended'
-                )
-              },
-
-              onLocalizationInit:
-                () => {
-                  console.log(
-                    '[Destination Capture] Localization started'
-                  )
-
-                  setStatus(
-                    'Scanning... move phone slowly'
-                  )
-                },
-
-              onLocalizationResult:
-                (result: any) => {
-                  console.log(
-                    '[Destination Capture] Localization result:',
-                    result
-                  )
-                },
-
-              onLocalizationFailure:
-                (reason: any) => {
-                  console.error(
-                    '[Destination Capture] Localization failed:',
-                    reason
-                  )
-
-                  setLocalized(false)
-
-                  setStatus(
-                    'Localization failed'
-                  )
-                },
-
-              onError:
-                (error: any) => {
-                  console.error(
-                    '[Destination Capture] XR ERROR:',
-                    error
-                  )
-
-                  setError(
-                    error?.message ||
-                      String(error)
-                  )
-                },
-            }
-          )
-
-        // -----------------------------------------------------
-        // 9. THREE ADAPTER
-        // -----------------------------------------------------
-
-        setStatus(
-          'Creating ThreeAdapter...'
-        )
-
-        const adapter =
-          new ThreeAdapter({
-            session,
-
-            renderer,
-
-            scene,
-
-            camera,
-
-            showMesh: false,
-
-            showGizmo: false,
-
-            useDefaultButton: true,
-
-            onLocalizationSuccess:
-              (
-                result: any,
-                worldFromMap: THREE.Matrix4
-              ) => {
-                if (disposed) {
-                  return
-                }
-
-                console.log(
-                  '================================'
-                )
-
-                console.log(
-                  '[Destination Capture] LOCALIZED'
-                )
-
-                console.log(
-                  '[Destination Capture] Confidence:',
-                  result?.localizeData
-                    ?.confidence
-                )
-
-                console.log(
-                  '[Destination Capture] worldFromMap:',
-                  worldFromMap
-                )
-
-                console.log(
-                  '================================'
-                )
-
-                // -------------------------------------------------
-                // SAVE MAP -> WORLD TRANSFORM
-                // -------------------------------------------------
-
-                worldFromMapRef.current =
-                  worldFromMap.clone()
-
-                setLocalized(true)
-
-                setStatus(
-                  'Localized successfully!'
-                )
-              },
-
-            onXRFrame:
-              () => {
-                if (
-                  disposed ||
-                  !camera
-                ) {
-                  return
-                }
-
-                // -----------------------------------------------
-                // We need localization first.
-                // -----------------------------------------------
-
-                if (
-                  !worldFromMapRef.current
-                ) {
-                  return
-                }
-
-                // -----------------------------------------------
-                // Camera WORLD position
-                // -----------------------------------------------
-
-                const worldPosition =
-                  new THREE.Vector3()
-
-                camera.getWorldPosition(
-                  worldPosition
-                )
-
-                // -----------------------------------------------
-                // WORLD -> MAP
-                // -----------------------------------------------
-
-                const mapFromWorld =
-                  worldFromMapRef.current
-                    .clone()
-                    .invert()
-
-                const mapPosition =
-                  worldPosition
-                    .clone()
-                    .applyMatrix4(
-                      mapFromWorld
-                    )
-
-                // -----------------------------------------------
-                // SAVE
-                // -----------------------------------------------
-
-                currentMapPositionRef.current =
-                  mapPosition
-
-                // -----------------------------------------------
-                // Don't update React every
-                // XR frame.
-                // -----------------------------------------------
-
-                const now =
-                  performance.now()
-
-                if (
-                  now -
-                    lastPositionUpdateRef.current <
-                  100
-                ) {
-                  return
-                }
-
-                lastPositionUpdateRef.current =
-                  now
-
-                setCurrentPosition({
-                  x: Number(
-                    mapPosition.x.toFixed(
-                      3
-                    )
-                  ),
-
-                  y: Number(
-                    mapPosition.y.toFixed(
-                      3
-                    )
-                  ),
-
-                  z: Number(
-                    mapPosition.z.toFixed(
-                      3
-                    )
-                  ),
-                })
-              },
-          })
-
-        adapterRef.current =
-          adapter
-
-        // -----------------------------------------------------
-        // 10. MAP SPACE
-        // -----------------------------------------------------
-
-        /**
-         * We DO NOT need Navigation here.
-         *
-         * MapSpace is enough to keep the
-         * map coordinate system connected
-         * to MultiSet.
-         */
-
-        const mapSpace =
-          new MapSpace(
-            new THREE.Object3D()
-          )
-
-        mapSpaceRef.current =
-          mapSpace
-
-        scene.add(
-          mapSpace.object
-        )
-
-        mapSpace.connect(
-          adapter
-        )
-
-        console.log(
-          '[Destination Capture] MapSpace connected'
-        )
-
-        // -----------------------------------------------------
-        // 11. INITIALIZE ADAPTER
-        // -----------------------------------------------------
-
-        setStatus(
-          'Initializing AR...'
-        )
-
-        /**
-         * IMPORTANT:
-         *
-         * Same initialization style
-         * as your working Kokarya page.
-         */
-        await adapter.initialize()
-
-        if (disposed) {
-          return
-        }
-
-        setStatus(
-          'Ready — tap START AR'
-        )
-
-        console.log(
-          '[Destination Capture] Ready'
-        )
-
-        // -----------------------------------------------------
-        // 12. RESIZE
-        // -----------------------------------------------------
-
-        resizeHandler =
-          () => {
-            if (
-              !renderer ||
-              !camera
-            ) {
-              return
-            }
-
-            camera.aspect =
-              window.innerWidth /
-              window.innerHeight
-
-            camera.updateProjectionMatrix()
-
-            renderer.setSize(
-              window.innerWidth,
-              window.innerHeight
+      | null = null;
+
+    const initialize =
+      async () => {
+        try {
+          // -----------------------------------------------------
+          // CONTAINER
+          // -----------------------------------------------------
+
+          if (!containerRef.current) {
+            return;
+          }
+
+          // -----------------------------------------------------
+          // ENVIRONMENT
+          // -----------------------------------------------------
+
+          if (
+            !CLIENT_ID ||
+            !CLIENT_SECRET ||
+            !MAP_CODE
+          ) {
+            setStatus(
+              "Missing MultiSet environment variables."
+            );
+
+            return;
+          }
+
+          // -----------------------------------------------------
+          // WEBXR SUPPORT
+          // -----------------------------------------------------
+
+          setStatus(
+            "Checking WebXR support..."
+          );
+
+          const supported =
+            await ThreeAdapter.isSupported();
+
+          if (!supported) {
+            throw new Error(
+              "WebXR immersive AR is not supported on this device."
+            );
+          }
+
+          if (disposed) {
+            return;
+          }
+
+          // =====================================================
+          // RENDERER
+          // =====================================================
+
+          setStatus(
+            "Creating Three.js scene..."
+          );
+
+          const renderer =
+            new THREE.WebGLRenderer({
+              antialias: true,
+              alpha: true,
+            });
+
+          renderer.setPixelRatio(
+            Math.min(
+              window.devicePixelRatio,
+              2
             )
+          );
+
+          renderer.setSize(
+            window.innerWidth,
+            window.innerHeight
+          );
+
+          // IMPORTANT
+          // Same as the working Kokarya page.
+          renderer.xr.enabled = true;
+
+          renderer.domElement.style.position =
+            "fixed";
+
+          renderer.domElement.style.left =
+            "0";
+
+          renderer.domElement.style.top =
+            "0";
+
+          renderer.domElement.style.width =
+            "100%";
+
+          renderer.domElement.style.height =
+            "100%";
+
+          renderer.domElement.style.zIndex =
+            "0";
+
+          containerRef.current.appendChild(
+            renderer.domElement
+          );
+
+          rendererRef.current =
+            renderer;
+
+          // =====================================================
+          // SCENE
+          // =====================================================
+
+          const scene =
+            new THREE.Scene();
+
+          // VERY IMPORTANT
+          // Do not give the scene a black background.
+          scene.background = null;
+
+          sceneRef.current =
+            scene;
+
+          // =====================================================
+          // CAMERA
+          // =====================================================
+
+          const camera =
+            new THREE.PerspectiveCamera(
+              70,
+
+              window.innerWidth /
+                window.innerHeight,
+
+              0.01,
+
+              1000
+            );
+
+          scene.add(camera);
+
+          cameraRef.current =
+            camera;
+
+          // =====================================================
+          // LIGHT
+          // =====================================================
+
+          scene.add(
+            new THREE.AmbientLight(
+              0xffffff,
+              1
+            )
+          );
+
+          // =====================================================
+          // MULTISET CLIENT
+          // =====================================================
+
+          setStatus(
+            "Authorizing MultiSet..."
+          );
+
+          const client =
+            new MultisetClient({
+              clientId:
+                CLIENT_ID,
+
+              clientSecret:
+                CLIENT_SECRET,
+
+              mapType: "map",
+
+              code: MAP_CODE,
+            });
+
+          await client.authorize();
+
+          if (disposed) {
+            return;
           }
 
-        window.addEventListener(
-          'resize',
-          resizeHandler
-        )
+          console.log(
+            "MultiSet authorized"
+          );
 
-        // -----------------------------------------------------
-        // 13. SAFETY ANIMATION LOOP
-        // -----------------------------------------------------
+          // =====================================================
+          // XR SESSION
+          // =====================================================
 
-        const tick =
-          () => {
-            if (disposed) {
-              return
-            }
+          setStatus(
+            "Starting MultiSet AR..."
+          );
 
-            animationFrameId =
-              requestAnimationFrame(
-                tick
-              )
+          const session =
+            new XRSessionManager(
+              renderer.getContext() as WebGL2RenderingContext,
+              {
+                client,
+
+                autoLocalize: true,
+
+                confidenceCheck: true,
+
+                onLocalizationSuccess:
+                  undefined,
+
+                onLocalizationFailure:
+                  (reason) => {
+                    console.warn(
+                      "Localization failed:",
+                      reason
+                    );
+
+                    setLocalized(false);
+
+                    setStatus(
+                      "Localization failed — move camera around"
+                    );
+                  },
+
+                onError:
+                  (error) => {
+                    console.error(
+                      "MultiSet session error:",
+                      error
+                    );
+
+                    setError(
+                      error instanceof Error
+                        ? error.message
+                        : String(error)
+                    );
+
+                    setStatus(
+                      "MultiSet error"
+                    );
+                  },
+              }
+            );
+
+          sessionRef.current =
+            session;
+
+          // =====================================================
+          // THREE ADAPTER
+          // =====================================================
+
+          const adapter =
+            new ThreeAdapter({
+              session,
+
+              renderer,
+
+              scene,
+
+              camera,
+
+              // IMPORTANT
+              showMesh: false,
+
+              showGizmo: false,
+
+              // IMPORTANT
+              // Let MultiSet create the AR button.
+              useDefaultButton: true,
+
+              // =================================================
+              // LOCALIZATION SUCCESS
+              // =================================================
+
+              onLocalizationSuccess:
+                (
+                  result,
+                  worldFromMap
+                ) => {
+                  if (disposed) {
+                    return;
+                  }
+
+                  console.log(
+                    "================================"
+                  );
+
+                  console.log(
+                    "MULTISET LOCALIZED"
+                  );
+
+                  console.log(
+                    "Result:",
+                    result
+                  );
+
+                  console.log(
+                    "worldFromMap:",
+                    worldFromMap
+                  );
+
+                  console.log(
+                    "================================"
+                  );
+
+                  // MAP -> WORLD
+                  worldFromMapRef.current =
+                    worldFromMap.clone();
+
+                  setLocalized(true);
+
+                  setStatus(
+                    "Localized — walk to destination"
+                  );
+                },
+
+              // =================================================
+              // XR FRAME
+              // =================================================
+
+              onXRFrame:
+                () => {
+                  if (disposed) {
+                    return;
+                  }
+
+                  if (
+                    !worldFromMapRef.current
+                  ) {
+                    return;
+                  }
+
+                  // ---------------------------------------------
+                  // CAMERA WORLD POSITION
+                  // ---------------------------------------------
+
+                  const worldPosition =
+                    new THREE.Vector3();
+
+                  camera.getWorldPosition(
+                    worldPosition
+                  );
+
+                  // ---------------------------------------------
+                  // WORLD -> MAP
+                  // ---------------------------------------------
+
+                  const mapFromWorld =
+                    worldFromMapRef.current
+                      .clone()
+                      .invert();
+
+                  const mapPosition =
+                    worldPosition
+                      .clone()
+                      .applyMatrix4(
+                        mapFromWorld
+                      );
+
+                  // ---------------------------------------------
+                  // STORE
+                  // ---------------------------------------------
+
+                  currentMapPositionRef.current =
+                    mapPosition;
+
+                  // ---------------------------------------------
+                  // UI UPDATE
+                  // ---------------------------------------------
+
+                  const now =
+                    performance.now();
+
+                  if (
+                    now -
+                      lastUiUpdateRef.current <
+                    100
+                  ) {
+                    return;
+                  }
+
+                  lastUiUpdateRef.current =
+                    now;
+
+                  setCurrentPosition({
+                    x: Number(
+                      mapPosition.x.toFixed(
+                        3
+                      )
+                    ),
+
+                    y: Number(
+                      mapPosition.y.toFixed(
+                        3
+                      )
+                    ),
+
+                    z: Number(
+                      mapPosition.z.toFixed(
+                        3
+                      )
+                    ),
+                  });
+                },
+            });
+
+          adapterRef.current =
+            adapter;
+
+          // =====================================================
+          // START ADAPTER
+          // =====================================================
+
+          /**
+           * IMPORTANT
+           *
+           * This is the same initialization
+           * used by the working page.
+           */
+          await adapter.initialize();
+
+          if (disposed) {
+            return;
           }
 
-        tick()
-      } catch (err) {
-        console.error(
-          '[Destination Capture] Initialization error:',
-          err
-        )
+          setStatus(
+            "Ready — press START AR"
+          );
 
-        const message =
-          err instanceof Error
-            ? err.message
-            : String(err)
+          console.log(
+            "Destination Capture ready"
+          );
 
-        setError(message)
+          // =====================================================
+          // RESIZE
+          // =====================================================
 
-        setStatus(
-          'Initialization failed'
-        )
-      }
-    }
+          resizeHandler =
+            () => {
+              if (
+                !rendererRef.current ||
+                !cameraRef.current
+              ) {
+                return;
+              }
 
-    init()
+              const width =
+                window.innerWidth;
 
-    // =======================================================
+              const height =
+                window.innerHeight;
+
+              cameraRef.current.aspect =
+                width / height;
+
+              cameraRef.current.updateProjectionMatrix();
+
+              rendererRef.current.setSize(
+                width,
+                height
+              );
+            };
+
+          window.addEventListener(
+            "resize",
+            resizeHandler
+          );
+        } catch (error) {
+          console.error(
+            "Destination Capture initialization error:",
+            error
+          );
+
+          setError(
+            error instanceof Error
+              ? error.message
+              : String(error)
+          );
+
+          setStatus(
+            "Initialization failed"
+          );
+        }
+      };
+
+    initialize();
+
+    // =========================================================
     // CLEANUP
-    // =======================================================
+    // =========================================================
 
     return () => {
-      disposed = true
-
-      if (
-        animationFrameId !== null
-      ) {
-        cancelAnimationFrame(
-          animationFrameId
-        )
-      }
+      disposed = true;
 
       if (resizeHandler) {
         window.removeEventListener(
-          'resize',
+          "resize",
           resizeHandler
-        )
+        );
       }
 
       try {
-        adapterRef.current?.dispose()
+        adapterRef.current?.dispose();
       } catch {}
 
       try {
-        mapSpaceRef.current?.dispose()
+        if (
+          rendererRef.current
+            ?.domElement
+            .parentElement
+        ) {
+          rendererRef.current
+            .domElement
+            .parentElement
+            .removeChild(
+              rendererRef.current
+                .domElement
+            );
+        }
       } catch {}
-
-      if (
-        rendererRef.current &&
-        rendererRef.current
-          .domElement
-          .parentElement
-      ) {
-        rendererRef.current
-          .domElement
-          .parentElement
-          .removeChild(
-            rendererRef.current
-              .domElement
-          )
-      }
 
       try {
-        rendererRef.current?.dispose()
+        rendererRef.current?.dispose();
       } catch {}
 
-      rendererRef.current =
-        null
+      rendererRef.current = null;
 
-      sceneRef.current =
-        null
+      sceneRef.current = null;
 
-      cameraRef.current =
-        null
+      cameraRef.current = null;
 
-      adapterRef.current =
-        null
+      adapterRef.current = null;
 
-      mapSpaceRef.current =
-        null
+      sessionRef.current = null;
 
       worldFromMapRef.current =
-        null
+        null;
 
       currentMapPositionRef.current =
-        null
-    }
-  }, [])
+        null;
+    };
+  }, []);
 
   // =========================================================
   // UI
@@ -979,24 +868,35 @@ ${lines.join(',\n\n')}
   return (
     <main
       style={{
-        position: 'fixed',
+        position: "fixed",
         inset: 0,
-        overflow: 'hidden',
-        background: '#000',
+        overflow: "hidden",
+
+        // UI background only.
+        // AR canvas is above/below independently.
+        background: "#000",
+
         fontFamily:
-          'Arial, sans-serif',
+          "Arial, sans-serif",
       }}
     >
       {/* =====================================================
-          THREE / AR CAMERA
+          AR CANVAS
       ====================================================== */}
 
       <div
         ref={containerRef}
         style={{
-          position: 'absolute',
+          position: "fixed",
           inset: 0,
+
+          width: "100%",
+          height: "100%",
+
           zIndex: 0,
+
+          pointerEvents:
+            "auto",
         }}
       />
 
@@ -1006,34 +906,35 @@ ${lines.join(',\n\n')}
 
       <div
         style={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          right: 16,
+          position: "absolute",
 
-          zIndex: 20,
+          top: 20,
+          left: 20,
+          right: 20,
 
-          padding: 16,
+          zIndex: 10,
 
-          borderRadius: 16,
+          padding: 18,
+
+          borderRadius: 18,
 
           background:
-            'rgba(0,0,0,0.72)',
-
-          color: '#fff',
+            "rgba(20,20,24,0.92)",
 
           backdropFilter:
-            'blur(15px)',
+            "blur(18px)",
+
+          color: "#fff",
 
           pointerEvents:
-            'none',
+            "none",
         }}
       >
         <div
           style={{
-            fontSize: 20,
+            fontSize: 24,
             fontWeight: 700,
-            marginBottom: 8,
+            marginBottom: 10,
           }}
         >
           Destination Capture
@@ -1041,8 +942,8 @@ ${lines.join(',\n\n')}
 
         <div
           style={{
-            fontSize: 13,
-            color: '#ccc',
+            fontSize: 16,
+            color: "#ccc",
           }}
         >
           {status}
@@ -1052,13 +953,31 @@ ${lines.join(',\n\n')}
           <div
             style={{
               marginTop: 10,
-              color: '#ff7777',
-              fontSize: 12,
+              color: "#ff7070",
+              fontSize: 13,
             }}
           >
             {error}
           </div>
         )}
+
+        <div
+          style={{
+            marginTop: 12,
+
+            color: localized
+              ? "#65f2a1"
+              : "#aaa",
+
+            fontSize: 15,
+
+            fontWeight: 600,
+          }}
+        >
+          {localized
+            ? "● Localized"
+            : "○ Waiting for localization"}
+        </div>
       </div>
 
       {/* =====================================================
@@ -1067,127 +986,80 @@ ${lines.join(',\n\n')}
 
       <div
         style={{
-          position: 'absolute',
+          position: "absolute",
 
-          left: 16,
-          right: 16,
-          bottom: 16,
+          left: 20,
+          right: 20,
+          bottom: 20,
 
-          zIndex: 20,
+          zIndex: 10,
 
           maxHeight:
-            '55vh',
+            "50vh",
 
-          overflowY: 'auto',
+          overflowY: "auto",
 
-          padding: 16,
+          padding: 18,
 
-          borderRadius: 18,
+          borderRadius: 20,
 
           background:
-            'rgba(0,0,0,0.84)',
+            "rgba(15,15,18,0.94)",
 
           backdropFilter:
-            'blur(18px)',
+            "blur(20px)",
 
-          color: '#fff',
+          color: "#fff",
         }}
       >
-        {/* ---------------------------------------------------
-            LOCALIZATION
-        ---------------------------------------------------- */}
-
-        <div
-          style={{
-            marginBottom: 14,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              color: '#888',
-              letterSpacing: 1,
-              marginBottom: 6,
-            }}
-          >
-            MULTISET
-          </div>
-
-          <div
-            style={{
-              color: localized
-                ? '#4ade80'
-                : '#aaa',
-
-              fontSize: 14,
-
-              fontWeight: 600,
-            }}
-          >
-            {localized
-              ? '● Localized'
-              : '○ Waiting for localization'}
-          </div>
-        </div>
-
-        {/* ---------------------------------------------------
+        {/* ===================================================
             CURRENT POSITION
-        ---------------------------------------------------- */}
+        ==================================================== */}
 
         <div
           style={{
-            marginBottom: 16,
+            marginBottom: 18,
           }}
         >
           <div
             style={{
               fontSize: 11,
-              color: '#888',
+              fontWeight: 700,
               letterSpacing: 1,
-              marginBottom: 7,
+              color: "#777",
+              marginBottom: 8,
             }}
           >
-            CURRENT MAP COORDINATES
+            CURRENT MAP POSITION
           </div>
 
           {currentPosition ? (
             <div
               style={{
-                display: 'grid',
-                gridTemplateColumns:
-                  'repeat(3, 1fr)',
-                gap: 8,
+                display: "flex",
+                gap: 20,
+                fontFamily:
+                  "monospace",
+                fontSize: 14,
               }}
             >
-              <Coordinate
-                label="X"
-                value={
-                  currentPosition.x
-                }
-              />
+              <span>
+                X: {currentPosition.x}
+              </span>
 
-              <Coordinate
-                label="Y"
-                value={
-                  currentPosition.y
-                }
-              />
+              <span>
+                Y: {currentPosition.y}
+              </span>
 
-              <Coordinate
-                label="Z"
-                value={
-                  currentPosition.z
-                }
-              />
+              <span>
+                Z: {currentPosition.z}
+              </span>
             </div>
           ) : (
             <div
               style={{
-                padding: 12,
-                borderRadius: 10,
-                background: '#111',
-                color: '#777',
-                fontSize: 12,
+                color: "#777",
+                fontSize: 13,
               }}
             >
               Start AR and localize
@@ -1196,55 +1068,50 @@ ${lines.join(',\n\n')}
           )}
         </div>
 
-        {/* ---------------------------------------------------
-            DESTINATION INPUT
-        ---------------------------------------------------- */}
+        {/* ===================================================
+            INPUT
+        ==================================================== */}
 
         <div
           style={{
-            display: 'flex',
+            display: "flex",
             gap: 8,
             marginBottom: 16,
           }}
         >
           <input
-            type="text"
-            value={
-              destinationName
-            }
-            onChange={event =>
+            value={destinationName}
+            onChange={(event) =>
               setDestinationName(
                 event.target.value
               )
             }
-            onKeyDown={event => {
+            onKeyDown={(event) => {
               if (
-                event.key ===
-                'Enter'
+                event.key === "Enter"
               ) {
-                captureDestination()
+                captureDestination();
               }
             }}
-            placeholder="Enter destination name"
+            placeholder="Destination name"
             disabled={!localized}
             style={{
               flex: 1,
-
               minWidth: 0,
 
               padding:
-                '13px 14px',
+                "13px 14px",
 
               border:
-                '1px solid #444',
+                "1px solid #444",
 
-              borderRadius: 10,
+              borderRadius: 11,
 
-              background: '#111',
+              background: "#111",
 
-              color: '#fff',
+              color: "#fff",
 
-              outline: 'none',
+              outline: "none",
 
               fontSize: 14,
             }}
@@ -1257,124 +1124,85 @@ ${lines.join(',\n\n')}
             }
             disabled={!localized}
             style={{
+              border: "none",
+
+              borderRadius: 11,
+
               padding:
-                '13px 16px',
-
-              border: 0,
-
-              borderRadius: 10,
+                "13px 16px",
 
               background:
                 localized
-                  ? '#00bfff'
-                  : '#444',
+                  ? "#00bfff"
+                  : "#444",
 
-              color: '#fff',
+              color: "#fff",
 
               fontWeight: 700,
 
               cursor:
                 localized
-                  ? 'pointer'
-                  : 'not-allowed',
+                  ? "pointer"
+                  : "not-allowed",
 
               whiteSpace:
-                'nowrap',
+                "nowrap",
             }}
           >
             Capture
           </button>
         </div>
 
-        {/* ---------------------------------------------------
+        {/* ===================================================
             DESTINATIONS
-        ---------------------------------------------------- */}
+        ==================================================== */}
 
         {destinations.length >
           0 && (
           <>
             <div
               style={{
-                display: 'flex',
-                justifyContent:
-                  'space-between',
-                alignItems:
-                  'center',
-                marginBottom: 8,
+                marginBottom: 10,
+
+                fontSize: 14,
+
+                fontWeight: 700,
               }}
             >
-              <div
-                style={{
-                  fontSize: 14,
-                  fontWeight: 700,
-                }}
-              >
-                Destinations (
-                {
-                  destinations.length
-                }
-                )
-              </div>
-
-              <button
-                type="button"
-                onClick={
-                  clearAll
-                }
-                style={{
-                  border:
-                    '1px solid #444',
-
-                  background:
-                    'transparent',
-
-                  color: '#aaa',
-
-                  borderRadius: 8,
-
-                  padding:
-                    '6px 10px',
-
-                  cursor:
-                    'pointer',
-                }}
-              >
-                Clear
-              </button>
+              Destinations (
+              {destinations.length})
             </div>
 
             {destinations.map(
-              destination => (
+              (destination) => (
                 <div
                   key={
                     destination.id
                   }
                   style={{
-                    display: 'flex',
+                    display: "flex",
 
                     justifyContent:
-                      'space-between',
+                      "space-between",
 
                     alignItems:
-                      'center',
+                      "center",
 
                     gap: 10,
 
-                    padding:
-                      '10px 12px',
+                    padding: 12,
 
-                    marginBottom: 6,
+                    marginBottom: 7,
 
-                    background:
-                      '#111',
+                    borderRadius: 11,
 
-                    borderRadius: 10,
+                    background: "#111",
                   }}
                 >
                   <div>
                     <div
                       style={{
-                        fontWeight: 600,
+                        fontWeight: 700,
                         fontSize: 14,
                       }}
                     >
@@ -1388,26 +1216,26 @@ ${lines.join(',\n\n')}
                         marginTop: 5,
 
                         fontFamily:
-                          'monospace',
+                          "monospace",
 
                         fontSize: 11,
 
-                        color: '#888',
+                        color: "#888",
                       }}
                     >
-                      X:{' '}
+                      X{" "}
                       {
                         destination
                           .position
                           .x
-                      }{' '}
-                      Y:{' '}
+                      }{" "}
+                      Y{" "}
                       {
                         destination
                           .position
                           .y
-                      }{' '}
-                      Z:{' '}
+                      }{" "}
+                      Z{" "}
                       {
                         destination
                           .position
@@ -1424,16 +1252,16 @@ ${lines.join(',\n\n')}
                       )
                     }
                     style={{
-                      border: 0,
+                      border: "none",
 
                       background:
-                        'transparent',
+                        "transparent",
 
                       color:
-                        '#ff6b6b',
+                        "#ff7070",
 
                       cursor:
-                        'pointer',
+                        "pointer",
                     }}
                   >
                     Delete
@@ -1442,22 +1270,25 @@ ${lines.join(',\n\n')}
               )
             )}
 
-            {/* -------------------------------------------------
+            {/* =================================================
                 GENERATED CODE
-            -------------------------------------------------- */}
+            ================================================== */}
 
             <div
               style={{
-                marginTop: 16,
+                marginTop: 18,
               }}
             >
               <div
                 style={{
-                  display: 'flex',
+                  display: "flex",
+
                   justifyContent:
-                    'space-between',
+                    "space-between",
+
                   alignItems:
-                    'center',
+                    "center",
+
                   marginBottom: 8,
                 }}
               >
@@ -1467,31 +1298,29 @@ ${lines.join(',\n\n')}
                     fontWeight: 700,
                   }}
                 >
-                  Generated Code
+                  Generated DESTINATIONS
                 </div>
 
                 <button
                   type="button"
-                  onClick={
-                    copyCode
-                  }
+                  onClick={copyCode}
                   style={{
-                    border: 0,
+                    border: "none",
 
-                    borderRadius: 8,
+                    borderRadius: 9,
 
                     padding:
-                      '8px 12px',
+                      "8px 12px",
 
                     background:
-                      '#00bfff',
+                      "#00bfff",
 
-                    color: '#fff',
+                    color: "#fff",
 
                     fontWeight: 700,
 
                     cursor:
-                      'pointer',
+                      "pointer",
                   }}
                 >
                   Copy
@@ -1504,85 +1333,33 @@ ${lines.join(',\n\n')}
 
                   padding: 14,
 
-                  background:
-                    '#050505',
-
                   borderRadius: 10,
 
-                  color: '#9ff',
+                  background:
+                    "#050505",
+
+                  color: "#9ff",
 
                   fontFamily:
-                    'monospace',
+                    "monospace",
 
                   fontSize: 11,
 
-                  lineHeight: 1.55,
+                  lineHeight: 1.5,
 
                   overflowX:
-                    'auto',
+                    "auto",
 
                   whiteSpace:
-                    'pre',
+                    "pre",
                 }}
               >
-                {
-                  generateCode()
-                }
+                {generatedCode}
               </pre>
             </div>
           </>
         )}
       </div>
     </main>
-  )
-}
-
-// =========================================================
-// COORDINATE COMPONENT
-// =========================================================
-
-function Coordinate({
-  label,
-  value,
-}: {
-  label: string
-  value: number
-}) {
-  return (
-    <div
-      style={{
-        padding: 12,
-
-        borderRadius: 10,
-
-        background: '#111',
-
-        border:
-          '1px solid #222',
-      }}
-    >
-      <div
-        style={{
-          fontSize: 10,
-          color: '#777',
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-
-      <div
-        style={{
-          fontFamily:
-            'monospace',
-
-          fontSize: 14,
-
-          fontWeight: 600,
-        }}
-      >
-        {value.toFixed(3)}
-      </div>
-    </div>
-  )
+  );
 }
