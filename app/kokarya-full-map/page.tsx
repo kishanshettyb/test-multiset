@@ -27,13 +27,34 @@ type Destination = {
 }
 
 const DESTINATIONS: Destination[] = [
+
+  {
+    id: 'entrance',
+    name: 'Entrance',
+    position: new THREE.Vector3(
+      -0.149,
+      -0.543,
+      1.201
+    ),
+  },
+
+  {
+    id: 'pantry',
+    name: 'Pantry',
+    position: new THREE.Vector3(
+      0.607,
+      -0.493,
+      6.68
+    ),
+  },
+
   {
     id: 'cabin-1',
     name: 'Cabin 1',
     position: new THREE.Vector3(
-      3.415,
-      -2.196,
-      1.390
+      4.758,
+      -0.47,
+      1.897
     ),
   },
 
@@ -41,62 +62,23 @@ const DESTINATIONS: Destination[] = [
     id: 'cabin-2',
     name: 'Cabin 2',
     position: new THREE.Vector3(
-      9.726,
-      -2.138,
-      1.542
+      8.962,
+      -0.488,
+      1.736
     ),
   },
 
   {
     id: 'meeting-room',
-    name: 'Meeting Room',
+    name: 'Meeting room',
     position: new THREE.Vector3(
-      11.947,
-      -2.185,
-      1.352
+      11.588,
+      -0.468,
+      1.757
     ),
-  },
+  }
 
-  {
-    id: 'lobby',
-    name: 'Lobby',
-    position: new THREE.Vector3(
-      1.282,
-      -1.214,
-      -2.935
-    ),
-  },
-
-  {
-    id: 'panetry',
-    name: 'Panetry',
-    position: new THREE.Vector3(
-      0.955,
-      -1.226,
-      7.942
-    ),
-  },
-
-  {
-    id: 'restroom',
-    name: 'Restroom',
-    position: new THREE.Vector3(
-      -0.895,
-      -1.498,
-      6.978
-    ),
-  },
-
-  {
-    id: 'entrance-door',
-    name: 'Entrance Door',
-    position: new THREE.Vector3(
-      -0.058,
-      -2.210,
-      1.260
-    ),
-  },
-]
+];
 
 export default function KokaryaFullMapPage() {
   const containerRef =
