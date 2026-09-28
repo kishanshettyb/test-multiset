@@ -123,15 +123,15 @@ const DESTINATIONS: Destination[] = [
 
 const ROUTE_HEIGHT = 0.045
 
-const ARROW_HEIGHT = 0.075
+const ARROW_HEIGHT = 0.065
 
 const DESTINATION_PIN_HEIGHT = 0.82
 
 const DESTINATION_LABEL_HEIGHT = 1.30
 
-const ARROW_SPACING = 0.72
+const ARROW_SPACING = 0.62
 
-const ARROW_SIZE = 0.28
+const ARROW_SIZE = 0.22
 
 const DIRECTION_UPDATE_DISTANCE = 0.15
 const VOICE_COOLDOWN = 3000
@@ -175,7 +175,7 @@ export default function KokaryaFullMapPage() {
     useRef<THREE.Group | null>(null)
 
   const arrowMeshesRef =
-    useRef<THREE.Mesh[]>([])
+    useRef<THREE.Group[]>([])
 
   const routePointsRef =
     useRef<THREE.Vector3[]>([])
@@ -397,69 +397,31 @@ export default function KokaryaFullMapPage() {
   // ===========================================================
 
   const createArrowGeometry = () => {
-    const shape =
-      new THREE.Shape()
+    const width = ARROW_SIZE
+    const height = ARROW_SIZE * 1.25
 
-    const width =
-      ARROW_SIZE
+    // Hollow chevron pointing along local +Z.
+    const points = [
+      new THREE.Vector3(
+        -width,
+        0,
+        -height * 0.35
+      ),
+      new THREE.Vector3(
+        0,
+        0,
+        height * 0.35
+      ),
+      new THREE.Vector3(
+        width,
+        0,
+        -height * 0.35
+      ),
+    ]
 
-    const height =
-      ARROW_SIZE * 1.45
-
-    /*
-     * Shape points upward:
-     *
-     *        /\
-     *       /  \
-     *      /    \
-     *       |  |
-     */
-
-    shape.moveTo(
-      -width,
-      -height * 0.42
+    return new THREE.BufferGeometry().setFromPoints(
+      points
     )
-
-    shape.lineTo(
-      0,
-      height * 0.5
-    )
-
-    shape.lineTo(
-      width,
-      -height * 0.42
-    )
-
-    shape.lineTo(
-      width * 0.42,
-      -height * 0.42
-    )
-
-    shape.lineTo(
-      0,
-      height * 0.12
-    )
-
-    shape.lineTo(
-      -width * 0.42,
-      -height * 0.42
-    )
-
-    shape.closePath()
-
-    const geometry =
-      new THREE.ShapeGeometry(
-        shape
-      )
-
-    /*
-     * Put geometry flat on floor.
-     */
-    geometry.rotateX(
-      -Math.PI / 2
-    )
-
-    return geometry
   }
 
   // ===========================================================
@@ -1246,15 +1208,14 @@ export default function KokaryaFullMapPage() {
     }
 
     // =========================================================
-    // ARROWS
+    // FLOWING CHEVRON ARROWS
     // =========================================================
 
     const arrowCount =
       Math.max(
-        4,
+        5,
         Math.floor(
-          total /
-          ARROW_SPACING
+          total / ARROW_SPACING
         )
       )
 
@@ -1263,37 +1224,89 @@ export default function KokaryaFullMapPage() {
       i < arrowCount;
       i++
     ) {
+      const arrowGroup =
+        new THREE.Group()
+
+      arrowGroup.name =
+        `navigation-chevron-${i}`
+
+      // Main hollow chevron.
       const geometry =
         createArrowGeometry()
 
       const material =
-        new THREE.MeshBasicMaterial({
-          color: 0x00d9ff,
+        new THREE.LineBasicMaterial({
+          color: 0x16b9ff,
           transparent: true,
           opacity: 0.95,
-          side: THREE.DoubleSide,
           depthWrite: false,
           depthTest: false,
+          linewidth: 2,
         })
 
-      const arrow =
-        new THREE.Mesh(
+      const chevron =
+        new THREE.Line(
           geometry,
           material
         )
 
-      arrow.frustumCulled =
+      chevron.frustumCulled =
         false
 
-      arrow.userData.index =
+      // Larger, softer glow.
+      const glowGeometry =
+        createArrowGeometry()
+
+      const glowMaterial =
+        new THREE.LineBasicMaterial({
+          color: 0x00aaff,
+          transparent: true,
+          opacity: 0.18,
+          depthWrite: false,
+          depthTest: false,
+        })
+
+      const glow =
+        new THREE.Line(
+          glowGeometry,
+          glowMaterial
+        )
+
+      glow.scale.set(
+        1.55,
+        1.55,
+        1.55
+      )
+
+      glow.frustumCulled =
+        false
+
+      arrowGroup.add(
+        glow
+      )
+
+      arrowGroup.add(
+        chevron
+      )
+
+      arrowGroup.userData.index =
         i
 
+      arrowGroup.userData.chevron =
+        chevron
+
+      arrowGroup.userData.glow =
+        glow
+
+      arrowGroup.frustumCulled =
+        false
+
       group.add(
-        arrow
+        arrowGroup
       )
 
       arrowMeshesRef.current.push(
-        arrow
+        arrowGroup
       )
     }
 
@@ -1637,7 +1650,7 @@ export default function KokaryaFullMapPage() {
       deltaSeconds
 
     // =========================================================
-    // ARROWS
+    // FLOWING CHEVRON ANIMATION
     // =========================================================
 
     const arrows =
@@ -1650,15 +1663,12 @@ export default function KokaryaFullMapPage() {
       arrows.length > 0 &&
       total > 0
     ) {
-      /*
-       * Slow continuous movement.
-       */
+      // Continuous forward flow.
       arrowOffsetRef.current +=
-        deltaSeconds *
-        0.42
+        deltaSeconds * 0.85
 
       if (
-        arrowOffsetRef.current >
+        arrowOffsetRef.current >=
         ARROW_SPACING
       ) {
         arrowOffsetRef.current -=
@@ -1667,16 +1677,15 @@ export default function KokaryaFullMapPage() {
 
       arrows.forEach(
         (
-          arrow,
+          arrowGroup,
           index
         ) => {
-          const base =
-            index *
-            ARROW_SPACING
+          const baseDistance =
+            index * ARROW_SPACING
 
           const distance =
             (
-              base +
+              baseDistance +
               arrowOffsetRef.current
             ) % total
 
@@ -1689,16 +1698,21 @@ export default function KokaryaFullMapPage() {
             return
           }
 
-          arrow.position.copy(
+          arrowGroup.position.copy(
             result.point
           )
 
-          arrow.position.y +=
-            ARROW_HEIGHT
+          const float =
+            Math.sin(
+              animationTimeRef.current * 4 +
+              index * 0.35
+            ) * 0.012
 
-          /*
-           * Route tangent in X/Z.
-           */
+          arrowGroup.position.y =
+            result.point.y +
+            ARROW_HEIGHT +
+            float
+
           const tangent =
             result.tangent.clone()
 
@@ -1710,46 +1724,83 @@ export default function KokaryaFullMapPage() {
           ) {
             tangent.normalize()
 
-            /*
-             * Our arrow geometry points
-             * along local +Z after rotation.
-             */
             const angle =
               Math.atan2(
                 tangent.x,
                 tangent.z
               )
 
-            arrow.rotation.set(
+            arrowGroup.rotation.set(
               0,
               angle,
               0
             )
           }
 
-          // ---------------------------------------------------
-          // PULSE
-          // ---------------------------------------------------
-
+          // Subtle breathing animation.
           const pulse =
-            0.82 +
+            1 +
             Math.sin(
-              animationTimeRef.current *
-              4 +
-              index *
-              0.5
+              animationTimeRef.current * 5 +
+              index * 0.45
             ) *
-            0.16
+            0.10
 
-          const material =
-            arrow.material
+          const chevron =
+            arrowGroup.userData
+              .chevron as THREE.Line | undefined
 
-          if (
-            material instanceof
-            THREE.MeshBasicMaterial
-          ) {
-            material.opacity =
+          if (chevron) {
+            chevron.scale.set(
+              pulse,
+              pulse,
               pulse
+            )
+
+            const material =
+              chevron.material as THREE.LineBasicMaterial
+
+            material.opacity =
+              0.72 +
+              Math.sin(
+                animationTimeRef.current * 3 +
+                index * 0.3
+              ) *
+              0.18
+          }
+
+          const glow =
+            arrowGroup.userData
+              .glow as THREE.Line | undefined
+
+          if (glow) {
+            const glowPulse =
+              1.15 +
+              Math.sin(
+                animationTimeRef.current * 4 +
+                index * 0.4
+              ) *
+              0.15
+
+            glow.scale.set(
+              glowPulse,
+              glowPulse,
+              glowPulse
+            )
+
+            const glowMaterial =
+              glow.material as THREE.LineBasicMaterial
+
+            glowMaterial.opacity =
+              0.10 +
+              (
+                Math.sin(
+                  animationTimeRef.current * 4 +
+                  index * 0.4
+                ) +
+                1
+              ) *
+              0.05
           }
         }
       )
