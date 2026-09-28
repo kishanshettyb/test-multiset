@@ -11,71 +11,125 @@ type Destination = {
   position: THREE.Vector3
 }
 
+// const destinations: Destination[] = [
+//   {
+//     id: 'cabin-1',
+//     name: 'Cabin 1',
+//     position: new THREE.Vector3(
+//       4.355,
+//       -1.071,
+//       2.215
+//     ),
+//   },
+//   {
+//     id: 'cabin-2',
+//     name: 'Cabin 2',
+//     position: new THREE.Vector3(
+//       8.995,
+//       -1.109,
+//       2.241
+//     ),
+//   },
+//   {
+//     id: 'meeting-room',
+//     name: 'Meeting Room',
+//     position: new THREE.Vector3(
+//       12.398,
+//       -0.622,
+//       2.274
+//     ),
+//   },
+//   {
+//     id: 'lobby',
+//     name: 'Lobby',
+//     position: new THREE.Vector3(
+//       0.881,
+//       -1.947,
+//       -1.917
+//     ),
+//   },
+//   {
+//     id: 'panetry',
+//     name: 'Panetry',
+//     position: new THREE.Vector3(
+//       1.143,
+//       -1.238,
+//       7.950
+//     ),
+//   },
+//   {
+//     id: 'restroom',
+//     name: 'Restroom',
+//     position: new THREE.Vector3(
+//       -0.902,
+//       -1.385,
+//       7.157
+//     ),
+//   },
+//   {
+//     id: 'entrance-door',
+//     name: 'Entrance Door',
+//     position: new THREE.Vector3(
+//       -1.039,
+//       -1.388,
+//       1.468
+//     ),
+//   },
+// ]
+
 const destinations: Destination[] = [
+
+  {
+    id: 'entrance',
+    name: 'Entrance',
+    position: new THREE.Vector3(
+      -0.149,
+      -0.543,
+      1.201
+    ),
+  },
+
+  {
+    id: 'pantry',
+    name: 'Pantry',
+    position: new THREE.Vector3(
+      0.607,
+      -0.493,
+      6.68
+    ),
+  },
+
   {
     id: 'cabin-1',
     name: 'Cabin 1',
     position: new THREE.Vector3(
-      4.355,
-      -1.071,
-      2.215
+      4.758,
+      -0.47,
+      1.897
     ),
   },
+
   {
     id: 'cabin-2',
     name: 'Cabin 2',
     position: new THREE.Vector3(
-      8.995,
-      -1.109,
-      2.241
+      8.962,
+      -0.488,
+      1.736
     ),
   },
+
   {
     id: 'meeting-room',
-    name: 'Meeting Room',
+    name: 'Meeting room',
     position: new THREE.Vector3(
-      12.398,
-      -0.622,
-      2.274
+      11.588,
+      -0.468,
+      1.757
     ),
-  },
-  {
-    id: 'lobby',
-    name: 'Lobby',
-    position: new THREE.Vector3(
-      0.881,
-      -1.947,
-      -1.917
-    ),
-  },
-  {
-    id: 'panetry',
-    name: 'Panetry',
-    position: new THREE.Vector3(
-      1.143,
-      -1.238,
-      7.950
-    ),
-  },
-  {
-    id: 'restroom',
-    name: 'Restroom',
-    position: new THREE.Vector3(
-      -0.902,
-      -1.385,
-      7.157
-    ),
-  },
-  {
-    id: 'entrance-door',
-    name: 'Entrance Door',
-    position: new THREE.Vector3(
-      -1.039,
-      -1.388,
-      1.468
-    ),
-  },
-]
+  }
+
+];
 
 export default function NavigatePage() {
   const containerRef = useRef<HTMLDivElement>(null)
