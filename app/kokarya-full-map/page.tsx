@@ -27,7 +27,6 @@ type Destination = {
 }
 
 const DESTINATIONS: Destination[] = [
-
   {
     id: 'entrance',
     name: 'Entrance',
@@ -76,11 +75,14 @@ const DESTINATIONS: Destination[] = [
       -0.468,
       1.757
     ),
-  }
-
-];
+  },
+]
 
 export default function KokaryaFullMapPage() {
+  // =========================================================
+  // REFS
+  // =========================================================
+
   const containerRef =
     useRef<HTMLDivElement | null>(null)
 
@@ -102,6 +104,17 @@ export default function KokaryaFullMapPage() {
   const pathMeshRef =
     useRef<THREE.Mesh | null>(null)
 
+  // Direction arrow
+  const arrowGroupRef =
+    useRef<THREE.Group | null>(null)
+
+  const arrowRef =
+    useRef<THREE.Mesh | null>(null)
+
+  // =========================================================
+  // STATE
+  // =========================================================
+
   const [status, setStatus] =
     useState('Initializing...')
 
@@ -122,6 +135,92 @@ export default function KokaryaFullMapPage() {
 
   const [error, setError] =
     useState('')
+
+  const [directionInstruction, setDirectionInstruction] =
+    useState('')
+
+  const [nextTurnDistance, setNextTurnDistance] =
+    useState<number | null>(null)
+
+  // =========================================================
+  // TURN INSTRUCTION HELPER
+  // =========================================================
+
+  const getTurnInstruction = (
+    corners: THREE.Vector3[]
+  ) => {
+    if (corners.length < 3) {
+      return {
+        instruction: 'Walk straight',
+        distance:
+          corners.length >= 2
+            ? corners[0].distanceTo(corners[1])
+            : null,
+      }
+    }
+
+    const first = corners[0]
+    const second = corners[1]
+    const third = corners[2]
+
+    const incoming =
+      new THREE.Vector3(
+        second.x - first.x,
+        0,
+        second.z - first.z
+      ).normalize()
+
+    const outgoing =
+      new THREE.Vector3(
+        third.x - second.x,
+        0,
+        third.z - second.z
+      ).normalize()
+
+    const cross =
+      incoming.x * outgoing.z -
+      incoming.z * outgoing.x
+
+    const dot =
+      incoming.x * outgoing.x +
+      incoming.z * outgoing.z
+
+    const angle =
+      Math.atan2(
+        Math.abs(cross),
+        dot
+      ) *
+      (180 / Math.PI)
+
+    const distanceToTurn =
+      first.distanceTo(second)
+
+    // Small angle = mostly straight
+    if (angle < 20) {
+      return {
+        instruction: 'Walk straight',
+        distance: distanceToTurn,
+      }
+    }
+
+    // Positive cross = left
+    if (cross > 0) {
+      return {
+        instruction: 'Turn left',
+        distance: distanceToTurn,
+      }
+    }
+
+    // Negative cross = right
+    return {
+      instruction: 'Turn right',
+      distance: distanceToTurn,
+    }
+  }
+
+  // =========================================================
+  // MAIN INITIALIZATION
+  // =========================================================
 
   useEffect(() => {
     let disposed = false
@@ -147,18 +246,21 @@ export default function KokaryaFullMapPage() {
     let navigation:
       Navigation | null = null
 
+    let arrowGroup:
+      THREE.Group | null = null
+
     let resizeHandler:
       (() => void) | null = null
 
     // =========================================================
-    // MAIN INITIALIZATION
+    // INIT
     // =========================================================
 
     const init = async () => {
       try {
-        // -----------------------------------------------------
+        // =====================================================
         // 1. CONTAINER
-        // -----------------------------------------------------
+        // =====================================================
 
         if (!containerRef.current) {
           throw new Error(
@@ -166,9 +268,9 @@ export default function KokaryaFullMapPage() {
           )
         }
 
-        // -----------------------------------------------------
+        // =====================================================
         // 2. WEBXR SUPPORT
-        // -----------------------------------------------------
+        // =====================================================
 
         setStatus(
           'Checking WebXR support...'
@@ -185,9 +287,9 @@ export default function KokaryaFullMapPage() {
 
         if (disposed) return
 
-        // -----------------------------------------------------
+        // =====================================================
         // 3. ENVIRONMENT VARIABLES
-        // -----------------------------------------------------
+        // =====================================================
 
         const clientId =
           process.env
@@ -211,9 +313,9 @@ export default function KokaryaFullMapPage() {
           )
         }
 
-        // -----------------------------------------------------
+        // =====================================================
         // 4. MULTISET CLIENT
-        // -----------------------------------------------------
+        // =====================================================
 
         setStatus(
           'Connecting to MultiSet...'
@@ -235,9 +337,9 @@ export default function KokaryaFullMapPage() {
           '[Kokarya] MultiSet authorized'
         )
 
-        // -----------------------------------------------------
+        // =====================================================
         // 5. THREE RENDERER
-        // -----------------------------------------------------
+        // =====================================================
 
         renderer =
           new THREE.WebGLRenderer({
@@ -259,13 +361,7 @@ export default function KokaryaFullMapPage() {
 
         renderer.xr.enabled = true
 
-        /*
-         * IMPORTANT:
-         *
-         * Transparent canvas allows
-         * the real camera feed to show.
-         */
-
+        // Transparent canvas
         renderer.setClearColor(
           0x000000,
           0
@@ -296,18 +392,18 @@ export default function KokaryaFullMapPage() {
         rendererRef.current =
           renderer
 
-        // -----------------------------------------------------
+        // =====================================================
         // 6. SCENE
-        // -----------------------------------------------------
+        // =====================================================
 
         scene =
           new THREE.Scene()
 
         scene.background = null
 
-        // -----------------------------------------------------
+        // =====================================================
         // 7. CAMERA
-        // -----------------------------------------------------
+        // =====================================================
 
         camera =
           new THREE.PerspectiveCamera(
@@ -320,9 +416,9 @@ export default function KokaryaFullMapPage() {
 
         scene.add(camera)
 
-        // -----------------------------------------------------
+        // =====================================================
         // 8. LIGHT
-        // -----------------------------------------------------
+        // =====================================================
 
         scene.add(
           new THREE.AmbientLight(
@@ -331,9 +427,9 @@ export default function KokaryaFullMapPage() {
           )
         )
 
-        // -----------------------------------------------------
+        // =====================================================
         // 9. MAP SPACE
-        // -----------------------------------------------------
+        // =====================================================
 
         mapSpace =
           new MapSpace(
@@ -351,9 +447,9 @@ export default function KokaryaFullMapPage() {
           '[Kokarya] MapSpace created'
         )
 
-        // -----------------------------------------------------
-        // 10. LOAD NAVMESH GLB
-        // -----------------------------------------------------
+        // =====================================================
+        // 10. LOAD NAVMESH
+        // =====================================================
 
         setStatus(
           'Loading NavMesh...'
@@ -361,11 +457,6 @@ export default function KokaryaFullMapPage() {
 
         const loader =
           new GLTFLoader()
-
-        /*
-         * CHANGE THIS ONLY IF YOUR FILE
-         * HAS A DIFFERENT NAME.
-         */
 
         const gltf =
           await loader.loadAsync(
@@ -377,28 +468,17 @@ export default function KokaryaFullMapPage() {
         const navMesh =
           gltf.scene
 
-        /*
-         * NavMesh belongs under MapSpace.
-         */
-
+        // NavMesh belongs under MapSpace
         mapSpace.object.add(
           navMesh
         )
 
-        /*
-         * VERY IMPORTANT:
-         *
-         * Do NOT display the raw NavMesh.
-         *
-         * The black polygons you previously
-         * saw were this geometry.
-         */
-
+        // Do not render raw NavMesh
         navMesh.visible = false
 
-        // -----------------------------------------------------
+        // =====================================================
         // 11. DEBUG NAVMESH BOUNDS
-        // -----------------------------------------------------
+        // =====================================================
 
         const bounds =
           new THREE.Box3().setFromObject(
@@ -435,9 +515,9 @@ export default function KokaryaFullMapPage() {
           bounds.max
         )
 
-        // -----------------------------------------------------
+        // =====================================================
         // 12. NAVMESH PATHFINDER
-        // -----------------------------------------------------
+        // =====================================================
 
         setStatus(
           'Creating NavMesh Pathfinder...'
@@ -466,9 +546,9 @@ export default function KokaryaFullMapPage() {
           pathfinder.groupCount
         )
 
-        // -----------------------------------------------------
+        // =====================================================
         // 13. XR SESSION
-        // -----------------------------------------------------
+        // =====================================================
 
         setStatus(
           'Creating AR session...'
@@ -492,6 +572,8 @@ export default function KokaryaFullMapPage() {
                   setStatus(
                     'Localization failed'
                   )
+
+                  setLocalized(false)
                 },
 
               onError:
@@ -511,9 +593,9 @@ export default function KokaryaFullMapPage() {
             }
           )
 
-        // -----------------------------------------------------
+        // =====================================================
         // 14. PATH MATERIAL
-        // -----------------------------------------------------
+        // =====================================================
 
         const pathMaterial =
           new THREE.MeshBasicMaterial({
@@ -529,9 +611,9 @@ export default function KokaryaFullMapPage() {
             depthWrite: false,
           })
 
-        // -----------------------------------------------------
+        // =====================================================
         // 15. PATH MESH
-        // -----------------------------------------------------
+        // =====================================================
 
         const pathMesh =
           new THREE.Mesh(
@@ -552,9 +634,69 @@ export default function KokaryaFullMapPage() {
         pathMeshRef.current =
           pathMesh
 
-        // -----------------------------------------------------
-        // 16. THREE ADAPTER
-        // -----------------------------------------------------
+        // =====================================================
+        // 16. DIRECTION ARROW
+        // =====================================================
+
+        arrowGroup =
+          new THREE.Group()
+
+        arrowGroup.visible =
+          false
+
+        mapSpace.object.add(
+          arrowGroup
+        )
+
+        arrowGroupRef.current =
+          arrowGroup
+
+        /*
+         * Cone points upward by default (+Y).
+         *
+         * Rotate X by 90 degrees so it points
+         * forward along +Z.
+         */
+        const arrowGeometry =
+          new THREE.ConeGeometry(
+            0.22,
+            0.55,
+            4
+          )
+
+        const arrowMaterial =
+          new THREE.MeshBasicMaterial({
+            color: 0x00d9ff,
+            transparent: true,
+            opacity: 0.95,
+            depthWrite: false,
+          })
+
+        const arrow =
+          new THREE.Mesh(
+            arrowGeometry,
+            arrowMaterial
+          )
+
+        arrow.rotation.x =
+          Math.PI / 2
+
+        arrow.position.y =
+          0.35
+
+        arrow.frustumCulled =
+          false
+
+        arrowGroup.add(
+          arrow
+        )
+
+        arrowRef.current =
+          arrow
+
+        // =====================================================
+        // 17. THREE ADAPTER
+        // =====================================================
 
         adapter =
           new ThreeAdapter({
@@ -565,11 +707,6 @@ export default function KokaryaFullMapPage() {
             scene,
 
             camera,
-
-            /*
-             * We don't want MultiSet's
-             * map mesh covering our AR view.
-             */
 
             showMesh: false,
 
@@ -602,32 +739,20 @@ export default function KokaryaFullMapPage() {
                   '================================'
                 )
 
-                setLocalized(
-                  true
-                )
+                setLocalized(true)
 
                 setStatus(
                   'Localized successfully!'
                 )
-
-                /*
-                 * IMPORTANT:
-                 *
-                 * We do NOT automatically
-                 * start navigation here.
-                 *
-                 * The user selects a destination
-                 * from the UI.
-                 */
               },
           })
 
         adapterRef.current =
           adapter
 
-        // -----------------------------------------------------
-        // 17. CONNECT MAP SPACE
-        // -----------------------------------------------------
+        // =====================================================
+        // 18. CONNECT MAP SPACE
+        // =====================================================
 
         mapSpace.connect(
           adapter
@@ -637,9 +762,9 @@ export default function KokaryaFullMapPage() {
           '[Kokarya] MapSpace connected'
         )
 
-        // -----------------------------------------------------
-        // 18. CREATE NAVIGATION
-        // -----------------------------------------------------
+        // =====================================================
+        // 19. CREATE NAVIGATION
+        // =====================================================
 
         setStatus(
           'Creating navigation...'
@@ -666,9 +791,9 @@ export default function KokaryaFullMapPage() {
           '[Kokarya] Navigation created'
         )
 
-        // -----------------------------------------------------
-        // 19. PATH UPDATED
-        // -----------------------------------------------------
+        // =====================================================
+        // 20. PATH UPDATED
+        // =====================================================
 
         navigation.on(
           'pathUpdated',
@@ -707,6 +832,10 @@ export default function KokaryaFullMapPage() {
               remainingDistance
             )
 
+            // =================================================
+            // NO VALID PATH
+            // =================================================
+
             if (
               corners.length < 2
             ) {
@@ -717,15 +846,29 @@ export default function KokaryaFullMapPage() {
                 false
               )
 
+              if (
+                arrowGroupRef.current
+              ) {
+                arrowGroupRef.current.visible =
+                  false
+              }
+
+              setDirectionInstruction(
+                ''
+              )
+
+              setNextTurnDistance(
+                null
+              )
+
               return
             }
 
-            // Dispose previous geometry.
-            pathMesh.geometry.dispose()
+            // =================================================
+            // BUILD CYAN PATH
+            // =================================================
 
-            /*
-             * Generate visible navigation ribbon.
-             */
+            pathMesh.geometry.dispose()
 
             pathMesh.geometry =
               buildPathRibbon(
@@ -755,12 +898,89 @@ export default function KokaryaFullMapPage() {
             console.log(
               '[Kokarya] CYAN PATH RENDERED'
             )
+
+            // =================================================
+            // DIRECTION GUIDANCE
+            // =================================================
+
+            const guidance =
+              getTurnInstruction(
+                corners
+              )
+
+            setDirectionInstruction(
+              guidance.instruction
+            )
+
+            setNextTurnDistance(
+              guidance.distance
+            )
+
+            // =================================================
+            // POSITION ARROW
+            // =================================================
+
+            if (
+              arrowGroupRef.current &&
+              corners.length >= 2
+            ) {
+              const group =
+                arrowGroupRef.current
+
+              const first =
+                corners[0]
+
+              const second =
+                corners[1]
+
+              // Direction from first corner to second
+              const direction =
+                new THREE.Vector3()
+                  .subVectors(
+                    second,
+                    first
+                  )
+                  .setY(0)
+                  .normalize()
+
+              // Put arrow slightly ahead
+              // of current position
+              const arrowPosition =
+                first.clone().add(
+                  direction
+                    .clone()
+                    .multiplyScalar(0.8)
+                )
+
+              arrowPosition.y +=
+                0.35
+
+              group.position.copy(
+                arrowPosition
+              )
+
+              // Rotate +Z toward path direction
+              const angle =
+                Math.atan2(
+                  direction.x,
+                  direction.z
+                )
+
+              group.rotation.set(
+                0,
+                angle,
+                0
+              )
+
+              group.visible =
+                true
+            }
           }
         )
 
-        // -----------------------------------------------------
-        // 20. ARRIVED
-        // -----------------------------------------------------
+        // =====================================================
+        // 21. ARRIVED
+        // =====================================================
 
         navigation.on(
           'arrived',
@@ -778,18 +998,33 @@ export default function KokaryaFullMapPage() {
               0
             )
 
+            setDirectionInstruction(
+              'Arrived'
+            )
+
+            setNextTurnDistance(
+              0
+            )
+
             pathMesh.visible =
               false
 
             setPathVisible(
               false
             )
+
+            if (
+              arrowGroupRef.current
+            ) {
+              arrowGroupRef.current.visible =
+                false
+            }
           }
         )
 
-        // -----------------------------------------------------
-        // 21. UNREACHABLE
-        // -----------------------------------------------------
+        // =====================================================
+        // 22. UNREACHABLE
+        // =====================================================
 
         navigation.on(
           'unreachable',
@@ -809,28 +1044,43 @@ export default function KokaryaFullMapPage() {
             setPathVisible(
               false
             )
+
+            setDirectionInstruction(
+              'No route'
+            )
+
+            setNextTurnDistance(
+              null
+            )
+
+            if (
+              arrowGroupRef.current
+            ) {
+              arrowGroupRef.current.visible =
+                false
+            }
           }
         )
 
-        // -----------------------------------------------------
-        // 22. INITIALIZE ADAPTER
-        // -----------------------------------------------------
+        // =====================================================
+        // 23. INITIALIZE ADAPTER
+        // =====================================================
 
         await adapter.initialize()
 
         if (disposed) return
 
         setStatus(
-          'Ready — tap START AR'
+          'Ready — localizing...'
         )
 
         console.log(
           '[Kokarya] Ready'
         )
 
-        // -----------------------------------------------------
-        // 23. RESIZE
-        // -----------------------------------------------------
+        // =====================================================
+        // 24. RESIZE
+        // =====================================================
 
         resizeHandler =
           () => {
@@ -857,7 +1107,6 @@ export default function KokaryaFullMapPage() {
           'resize',
           resizeHandler
         )
-
       } catch (err) {
         console.error(
           '[Kokarya] Initialization error:',
@@ -904,11 +1153,31 @@ export default function KokaryaFullMapPage() {
         mapSpace?.dispose()
       } catch {}
 
-      if (pathMeshRef.current) {
+      // Dispose path
+      if (
+        pathMeshRef.current
+      ) {
         pathMeshRef.current.geometry.dispose()
 
         const material =
           pathMeshRef.current.material
+
+        if (
+          material instanceof
+          THREE.Material
+        ) {
+          material.dispose()
+        }
+      }
+
+      // Dispose arrow
+      if (
+        arrowRef.current
+      ) {
+        arrowRef.current.geometry.dispose()
+
+        const material =
+          arrowRef.current.material
 
         if (
           material instanceof
@@ -942,6 +1211,12 @@ export default function KokaryaFullMapPage() {
         null
 
       rendererRef.current =
+        null
+
+      arrowGroupRef.current =
+        null
+
+      arrowRef.current =
         null
     }
   }, [])
@@ -990,11 +1265,15 @@ export default function KokaryaFullMapPage() {
       `Navigating to ${destination.name}...`
     )
 
-    /*
-     * This is the actual MultiSet
-     * navigation call.
-     */
+    setDirectionInstruction(
+      'Calculating route...'
+    )
 
+    setNextTurnDistance(
+      null
+    )
+
+    // Actual MultiSet navigation call
     navigation.setDestination(
       destination.id
     )
@@ -1013,9 +1292,9 @@ export default function KokaryaFullMapPage() {
         background: 'transparent',
       }}
     >
-      {/* ===================================================
-          THREE.JS
-      =================================================== */}
+      {/* =====================================================
+          THREE.JS / AR
+      ===================================================== */}
 
       <div
         ref={containerRef}
@@ -1027,9 +1306,9 @@ export default function KokaryaFullMapPage() {
         }}
       />
 
-      {/* ===================================================
+      {/* =====================================================
           TOP STATUS
-      =================================================== */}
+      ===================================================== */}
 
       <div
         style={{
@@ -1064,6 +1343,8 @@ export default function KokaryaFullMapPage() {
             'none',
         }}
       >
+        {/* TITLE */}
+
         <div
           style={{
             fontSize: 24,
@@ -1073,6 +1354,8 @@ export default function KokaryaFullMapPage() {
           Kokarya Full Map
         </div>
 
+        {/* STATUS */}
+
         <div
           style={{
             marginTop: 6,
@@ -1081,6 +1364,8 @@ export default function KokaryaFullMapPage() {
         >
           {status}
         </div>
+
+        {/* NAVMESH GROUP COUNT */}
 
         <div
           style={{
@@ -1094,10 +1379,13 @@ export default function KokaryaFullMapPage() {
             'loading...'}
         </div>
 
+        {/* LOCALIZATION */}
+
         <div
           style={{
             marginTop: 5,
             fontSize: 13,
+
             color:
               localized
                 ? '#75ffae'
@@ -1109,6 +1397,8 @@ export default function KokaryaFullMapPage() {
             ? 'Localized'
             : 'Not localized'}
         </div>
+
+        {/* TOTAL DISTANCE */}
 
         {distance !== null && (
           <div
@@ -1123,6 +1413,62 @@ export default function KokaryaFullMapPage() {
           </div>
         )}
 
+        {/* =================================================
+            DIRECTION INSTRUCTION
+        ================================================= */}
+
+        {directionInstruction && (
+          <div
+            style={{
+              marginTop: 10,
+
+              fontSize: 17,
+
+              fontWeight: 600,
+
+              color:
+                directionInstruction ===
+                'Arrived'
+                  ? '#75ffae'
+                  : '#00d9ff',
+            }}
+          >
+            {directionInstruction ===
+            'Turn left'
+              ? '←'
+              : directionInstruction ===
+                'Turn right'
+              ? '→'
+              : directionInstruction ===
+                'Arrived'
+              ? '✓'
+              : '↑'}{' '}
+            {directionInstruction}
+          </div>
+        )}
+
+        {/* NEXT TURN DISTANCE */}
+
+        {nextTurnDistance !== null &&
+          directionInstruction !==
+            'Arrived' && (
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 13,
+                opacity: 0.75,
+              }}
+            >
+              Next instruction in{' '}
+              {nextTurnDistance.toFixed(
+                1
+              )}{' '}
+              m
+            </div>
+          )}
+
+        {/* PATH ACTIVE */}
+
         {pathVisible && (
           <div
             style={{
@@ -1135,16 +1481,24 @@ export default function KokaryaFullMapPage() {
           </div>
         )}
 
+        {/* ERROR */}
+
         {error && (
           <div
             style={{
               marginTop: 10,
+
               padding: 8,
+
               borderRadius: 8,
+
               background:
                 'rgba(255,0,0,0.15)',
+
               color: '#ff9b9b',
+
               fontSize: 12,
+
               wordBreak:
                 'break-word',
             }}
@@ -1154,9 +1508,9 @@ export default function KokaryaFullMapPage() {
         )}
       </div>
 
-      {/* ===================================================
+      {/* =====================================================
           DESTINATION LIST
-      =================================================== */}
+      ===================================================== */}
 
       <div
         style={{
@@ -1164,6 +1518,7 @@ export default function KokaryaFullMapPage() {
 
           left: 16,
           right: 16,
+
           bottom: 24,
 
           zIndex: 20,
@@ -1179,6 +1534,9 @@ export default function KokaryaFullMapPage() {
 
           pointerEvents:
             'auto',
+
+          scrollbarWidth:
+            'none',
         }}
       >
         {DESTINATIONS.map(
