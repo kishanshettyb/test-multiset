@@ -1,25 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 import {
   MultisetClient,
   XRSessionManager,
 } from "@multisetai/vps/core";
 
-import {
-  ThreeAdapter,
-  MapSpace,
-} from "@multisetai/vps/three";
+import { ThreeAdapter } from "@multisetai/vps/three";
 
-import {
-  Navigation,
-  NavMeshPathfinder,
-} from "@multisetai/vps/navigation";
-
-type Destination = {
+type CapturedDestination = {
   id: string;
   name: string;
   position: {
@@ -29,10 +20,18 @@ type Destination = {
   };
 };
 
-const NAVMESH_URL = "/models/kokarya-navmesh.glb";
+const MAP_CODE =
+  process.env.NEXT_PUBLIC_MULTISET_MAP_CODE ?? "";
+
+const CLIENT_ID =
+  process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID ?? "";
+
+const CLIENT_SECRET =
+  process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET ?? "";
 
 export default function DestinationCapturePage() {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef =
+    useRef<HTMLDivElement | null>(null);
 
   const rendererRef =
     useRef<THREE.WebGLRenderer | null>(null);
@@ -46,25 +45,29 @@ export default function DestinationCapturePage() {
   const adapterRef =
     useRef<ThreeAdapter | null>(null);
 
-  const navigationRef =
-    useRef<Navigation | null>(null);
+  const sessionRef =
+    useRef<XRSessionManager | null>(null);
 
-  const pathfinderRef =
-    useRef<NavMeshPathfinder | null>(null);
+  /**
+   * MultiSet gives us this matrix after localization.
+   *
+   * map -> world
+   */
+  const worldFromMapRef =
+    useRef<THREE.Matrix4 | null>(null);
 
-  const mapSpaceRef =
-    useRef<MapSpace | null>(null);
-
-  const animationFrameRef =
-    useRef<number | null>(null);
+  /**
+   * Current device position in MAP coordinates.
+   *
+   * Updated every XR frame.
+   */
+  const currentMapPositionRef =
+    useRef<THREE.Vector3 | null>(null);
 
   const [status, setStatus] =
-    useState("Preparing...");
+    useState("Initializing...");
 
   const [localized, setLocalized] =
-    useState(false);
-
-  const [navMeshReady, setNavMeshReady] =
     useState(false);
 
   const [destinationName, setDestinationName] =
@@ -78,122 +81,94 @@ export default function DestinationCapturePage() {
     } | null>(null);
 
   const [
-    capturedDestinations,
-    setCapturedDestinations,
-  ] = useState<Destination[]>([]);
-
-  // --------------------------------------------------
-  // Generate the copy-paste TypeScript code
-  // --------------------------------------------------
-
-  const generatedCode =
-    `const DESTINATIONS: Destination[] = [\n\n` +
-    capturedDestinations
-      .map(
-        (destination) => `  {
-    id: '${destination.id}',
-    name: '${destination.name.replace(/'/g, "\\'")}',
-    position: new THREE.Vector3(
-      ${destination.position.x},
-      ${destination.position.y},
-      ${destination.position.z}
-    ),
-  }`
-      )
-      .join(",\n\n") +
-    `\n];`;
+    destinations,
+    setDestinations,
+  ] = useState<CapturedDestination[]>([]);
 
   // --------------------------------------------------
   // Create safe ID
   // --------------------------------------------------
 
-  const createId = (name: string) => {
-    return name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  };
+  const createId = useCallback(
+    (name: string) => {
+      return name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    },
+    []
+  );
 
   // --------------------------------------------------
-  // Get current viewer position
+  // Generated TypeScript code
   // --------------------------------------------------
 
-  const updateCurrentPosition = () => {
-    const navigation =
-      navigationRef.current;
-
-    const pathfinder =
-      pathfinderRef.current;
-
-    if (!navigation || !pathfinder) {
-      return;
+  const generatedCode = useMemo(() => {
+    if (destinations.length === 0) {
+      return `const DESTINATIONS: Destination[] = [];`;
     }
 
-    if (!localized) {
-      return;
-    }
+    const items = destinations
+      .map((destination) => {
+        const safeName =
+          destination.name.replace(
+            /'/g,
+            "\\'"
+          );
 
-    const viewerPosition =
-      navigation.getViewerMapPosition();
+        return `  {
+    id: '${destination.id}',
+    name: '${safeName}',
+    position: new THREE.Vector3(
+      ${destination.position.x},
+      ${destination.position.y},
+      ${destination.position.z}
+    ),
+  }`;
+      })
+      .join(",\n\n");
 
-    if (!viewerPosition) {
-      return;
-    }
+    return `const DESTINATIONS: Destination[] = [
 
-    // Project the camera position onto
-    // the walkable NavMesh.
-    const navMeshPosition =
-      pathfinder.clampToNavMesh(
-        viewerPosition
-      );
+${items}
 
-    if (!navMeshPosition) {
-      return;
-    }
+];`;
+  }, [destinations]);
 
-    setCurrentPosition({
-      x: Number(
-        navMeshPosition.x.toFixed(3)
-      ),
+  // --------------------------------------------------
+  // Get current MAP position
+  // --------------------------------------------------
 
-      y: Number(
-        navMeshPosition.y.toFixed(3)
-      ),
+  const getCurrentMapPosition =
+    useCallback(() => {
+      const position =
+        currentMapPositionRef.current;
 
-      z: Number(
-        navMeshPosition.z.toFixed(3)
-      ),
-    });
-  };
+      if (!position) {
+        return null;
+      }
+
+      return {
+        x: Number(
+          position.x.toFixed(3)
+        ),
+
+        y: Number(
+          position.y.toFixed(3)
+        ),
+
+        z: Number(
+          position.z.toFixed(3)
+        ),
+      };
+    }, []);
 
   // --------------------------------------------------
   // Capture destination
   // --------------------------------------------------
 
-  const captureDestination = () => {
-    const navigation =
-      navigationRef.current;
-
-    const pathfinder =
-      pathfinderRef.current;
-
-    if (!navigation) {
-      alert(
-        "Navigation is not ready."
-      );
-
-      return;
-    }
-
-    if (!pathfinder) {
-      alert(
-        "NavMesh is not ready."
-      );
-
-      return;
-    }
-
+  const captureDestination = useCallback(() => {
     if (!localized) {
       alert(
         "Please wait until MultiSet is localized."
@@ -213,642 +188,612 @@ export default function DestinationCapturePage() {
       return;
     }
 
-    // Get current camera/viewer position
-    // in MultiSet map coordinates.
-    const viewerPosition =
-      navigation.getViewerMapPosition();
+    const position =
+      getCurrentMapPosition();
 
-    if (!viewerPosition) {
+    if (!position) {
       alert(
-        "Current map position is not available."
+        "Current map position is not available yet."
       );
 
       return;
     }
 
-    // Snap to the walkable NavMesh.
-    const navMeshPosition =
-      pathfinder.clampToNavMesh(
-        viewerPosition
-      );
+    const id =
+      createId(name);
 
-    if (!navMeshPosition) {
+    if (!id) {
       alert(
-        "You are not close enough to the NavMesh. Move onto the walkable floor and try again."
+        "Please enter a valid destination name."
       );
 
       return;
     }
 
-    const destination: Destination = {
-      id: createId(name),
-
+    const destination: CapturedDestination = {
+      id,
       name,
-
-      position: {
-        x: Number(
-          navMeshPosition.x.toFixed(3)
-        ),
-
-        y: Number(
-          navMeshPosition.y.toFixed(3)
-        ),
-
-        z: Number(
-          navMeshPosition.z.toFixed(3)
-        ),
-      },
+      position,
     };
 
-    // Check duplicate ID
-    const duplicate =
-      capturedDestinations.some(
-        (item) =>
-          item.id === destination.id
-      );
+    setDestinations(
+      (previous) => {
+        const existingIndex =
+          previous.findIndex(
+            (item) =>
+              item.id === id
+          );
 
-    if (duplicate) {
-      const shouldReplace =
-        window.confirm(
-          `"${name}" already exists.\n\nDo you want to replace its coordinate?`
-        );
+        /**
+         * If destination already exists,
+         * replace its coordinates.
+         */
+        if (existingIndex !== -1) {
+          const updated = [
+            ...previous,
+          ];
 
-      if (!shouldReplace) {
-        return;
-      }
+          updated[existingIndex] =
+            destination;
 
-      setCapturedDestinations(
-        (previous) =>
-          previous.map((item) =>
-            item.id === destination.id
-              ? destination
-              : item
-          )
-      );
-    } else {
-      setCapturedDestinations(
-        (previous) => [
+          return updated;
+        }
+
+        return [
           ...previous,
           destination,
-        ]
-      );
-    }
+        ];
+      }
+    );
 
     setDestinationName("");
-
-    setCurrentPosition({
-      x: destination.position.x,
-      y: destination.position.y,
-      z: destination.position.z,
-    });
 
     console.log(
       "[Destination Capture]",
       destination
     );
-  };
+  }, [
+    localized,
+    destinationName,
+    getCurrentMapPosition,
+    createId,
+  ]);
 
   // --------------------------------------------------
-  // Copy generated code
+  // Delete one
   // --------------------------------------------------
 
-  const copyCode = async () => {
-    if (
-      capturedDestinations.length === 0
-    ) {
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(
-        generatedCode
-      );
-
-      alert(
-        "DESTINATIONS code copied!"
-      );
-    } catch (error) {
-      console.error(
-        "Clipboard error:",
-        error
-      );
-
-      alert(
-        "Unable to copy automatically."
-      );
-    }
-  };
-
-  // --------------------------------------------------
-  // Delete destination
-  // --------------------------------------------------
-
-  const deleteDestination = (
-    id: string
-  ) => {
-    setCapturedDestinations(
-      (previous) =>
-        previous.filter(
-          (item) => item.id !== id
-        )
+  const deleteDestination =
+    useCallback(
+      (id: string) => {
+        setDestinations(
+          (previous) =>
+            previous.filter(
+              (item) =>
+                item.id !== id
+            )
+        );
+      },
+      []
     );
-  };
 
   // --------------------------------------------------
   // Clear all
   // --------------------------------------------------
 
-  const clearAll = () => {
-    if (
-      capturedDestinations.length === 0
-    ) {
-      return;
-    }
+  const clearAll =
+    useCallback(() => {
+      if (destinations.length === 0) {
+        return;
+      }
 
-    const confirmed =
-      window.confirm(
-        "Delete all captured destinations?"
-      );
+      const confirmed =
+        window.confirm(
+          "Clear all captured destinations?"
+        );
 
-    if (!confirmed) {
-      return;
-    }
+      if (!confirmed) {
+        return;
+      }
 
-    setCapturedDestinations([]);
-  };
+      setDestinations([]);
+    }, [destinations.length]);
 
   // --------------------------------------------------
-  // Initialize MultiSet + Three.js
+  // Copy generated code
+  // --------------------------------------------------
+
+  const copyCode =
+    useCallback(async () => {
+      try {
+        await navigator.clipboard.writeText(
+          generatedCode
+        );
+
+        alert(
+          "DESTINATIONS code copied."
+        );
+      } catch (error) {
+        console.error(
+          "Clipboard error:",
+          error
+        );
+
+        alert(
+          "Unable to copy. Please copy the code manually."
+        );
+      }
+    }, [generatedCode]);
+
+  // --------------------------------------------------
+  // MultiSet initialization
   // --------------------------------------------------
 
   useEffect(() => {
     let disposed = false;
 
-    const initialize = async () => {
-      try {
-        setStatus(
-          "Initializing MultiSet..."
-        );
+    const initialize =
+      async () => {
+        try {
+          if (!containerRef.current) {
+            return;
+          }
 
-        if (!containerRef.current) {
-          return;
-        }
+          if (
+            !CLIENT_ID ||
+            !CLIENT_SECRET ||
+            !MAP_CODE
+          ) {
+            setStatus(
+              "Missing MultiSet environment variables."
+            );
 
-        // ------------------------------------------
-        // Scene
-        // ------------------------------------------
+            console.error(
+              "Missing MultiSet environment variables."
+            );
 
-        const scene =
-          new THREE.Scene();
+            return;
+          }
 
-        scene.background = null;
-
-        sceneRef.current = scene;
-
-        // ------------------------------------------
-        // Camera
-        // ------------------------------------------
-
-        const camera =
-          new THREE.PerspectiveCamera(
-            70,
-            window.innerWidth /
-              window.innerHeight,
-            0.01,
-            1000
+          setStatus(
+            "Creating Three.js scene..."
           );
 
-        cameraRef.current = camera;
+          // ----------------------------------------
+          // Renderer
+          // ----------------------------------------
 
-        // ------------------------------------------
-        // Renderer
-        // ------------------------------------------
+          const renderer =
+            new THREE.WebGLRenderer({
+              antialias: true,
+              alpha: true,
+            });
 
-        const renderer =
-          new THREE.WebGLRenderer({
-            antialias: true,
-            alpha: true,
-            powerPreference:
-              "high-performance",
-          });
-
-        renderer.setPixelRatio(
-          Math.min(
-            window.devicePixelRatio,
-            2
-          )
-        );
-
-        renderer.setSize(
-          window.innerWidth,
-          window.innerHeight
-        );
-
-        renderer.xr.enabled = false;
-
-        renderer.domElement.style.position =
-          "fixed";
-
-        renderer.domElement.style.left =
-          "0";
-
-        renderer.domElement.style.top =
-          "0";
-
-        renderer.domElement.style.width =
-          "100%";
-
-        renderer.domElement.style.height =
-          "100%";
-
-        renderer.domElement.style.zIndex =
-          "0";
-
-        containerRef.current.appendChild(
-          renderer.domElement
-        );
-
-        rendererRef.current =
-          renderer;
-
-        // ------------------------------------------
-        // Lighting
-        // ------------------------------------------
-
-        const ambientLight =
-          new THREE.AmbientLight(
-            0xffffff,
-            1
+          renderer.setPixelRatio(
+            Math.min(
+              window.devicePixelRatio,
+              2
+            )
           );
-
-        scene.add(ambientLight);
-
-        const directionalLight =
-          new THREE.DirectionalLight(
-            0xffffff,
-            1
-          );
-
-        directionalLight.position.set(
-          5,
-          10,
-          5
-        );
-
-        scene.add(
-          directionalLight
-        );
-
-        // ------------------------------------------
-        // MultiSet Client
-        // ------------------------------------------
-
-        const clientId =
-          process.env
-            .NEXT_PUBLIC_MULTISET_CLIENT_ID;
-
-        const clientSecret =
-          process.env
-            .NEXT_PUBLIC_MULTISET_CLIENT_SECRET;
-
-        const mapCode =
-          process.env
-            .NEXT_PUBLIC_MULTISET_MAP_CODE;
-
-        if (
-          !clientId ||
-          !clientSecret ||
-          !mapCode
-        ) {
-          throw new Error(
-            "Missing MultiSet environment variables."
-          );
-        }
-
-        const client =
-          new MultisetClient({
-            clientId,
-            clientSecret,
-            mapType: "map-set",
-            code: mapCode,
-          });
-
-        setStatus(
-          "Authorizing MultiSet..."
-        );
-
-        await client.authorize();
-
-        if (disposed) {
-          return;
-        }
-
-        // ------------------------------------------
-        // XR Session
-        // ------------------------------------------
-
-        const session =
-          new XRSessionManager(
-            renderer.getContext() as WebGL2RenderingContext,
-            {
-              client,
-
-              autoLocalize: true,
-
-              relocalization: true,
-
-              onLocalizationSuccess:
-                undefined,
-
-              onLocalizationFailure:
-                (reason) => {
-                  console.warn(
-                    "Localization failed:",
-                    reason
-                  );
-
-                  setStatus(
-                    "Localization failed"
-                  );
-
-                  setLocalized(false);
-                },
-
-              onError: (error) => {
-                console.error(
-                  "MultiSet session error:",
-                  error
-                );
-
-                setStatus(
-                  "MultiSet error"
-                );
-              },
-            }
-          );
-
-        // ------------------------------------------
-        // Three Adapter
-        // ------------------------------------------
-
-        const adapter =
-          new ThreeAdapter({
-            session,
-            renderer,
-            scene,
-            camera,
-
-            showMesh: false,
-
-            showGizmo: false,
-
-            useDefaultButton: true,
-
-            onLocalizationSuccess:
-              () => {
-                console.log(
-                  "Localized successfully"
-                );
-
-                setLocalized(true);
-
-                setStatus(
-                  "Localized successfully"
-                );
-              },
-
-            onXRFrame:
-              ({ deltaSeconds }) => {
-                // Navigation.update() is normally
-                // handled by Navigation itself.
-                void deltaSeconds;
-              },
-          });
-
-        adapterRef.current =
-          adapter;
-
-        // IMPORTANT:
-        // ThreeAdapter must be initialized.
-        adapter.initialize();
-
-        // ------------------------------------------
-        // MapSpace
-        // ------------------------------------------
-
-        const mapSpace =
-          new MapSpace(
-            new THREE.Object3D()
-          );
-
-        scene.add(
-          mapSpace.object
-        );
-
-        mapSpace.connect(
-          adapter
-        );
-
-        mapSpaceRef.current =
-          mapSpace;
-
-        // ------------------------------------------
-        // Load NavMesh GLB
-        // ------------------------------------------
-
-        setStatus(
-          "Loading NavMesh..."
-        );
-
-        const loader =
-          new GLTFLoader();
-
-        const gltf =
-          await loader.loadAsync(
-            NAVMESH_URL
-          );
-
-        if (disposed) {
-          return;
-        }
-
-        const navMeshObject =
-          gltf.scene;
-
-        navMeshObject.visible =
-          false;
-
-        // Keep the navmesh under MapSpace.
-        mapSpace.object.add(
-          navMeshObject
-        );
-
-        console.log(
-          "NavMesh loaded:",
-          navMeshObject
-        );
-
-        // ------------------------------------------
-        // Build Pathfinder
-        // ------------------------------------------
-
-        const pathfinder =
-          await NavMeshPathfinder.fromObject3D(
-            navMeshObject,
-            {
-              space:
-                mapSpace.object,
-            }
-          );
-
-        if (disposed) {
-          return;
-        }
-
-        pathfinderRef.current =
-          pathfinder;
-
-        setNavMeshReady(true);
-
-        console.log(
-          "NavMesh groups:",
-          pathfinder.groupCount
-        );
-
-        // ------------------------------------------
-        // Navigation
-        // ------------------------------------------
-        //
-        // We create Navigation even though this
-        // page does not navigate anywhere.
-        //
-        // We use it for:
-        //
-        // getViewerMapPosition()
-        //
-        // which gives the current device position
-        // in MultiSet map coordinates.
-        // ------------------------------------------
-
-        const navigation =
-          await Navigation.create({
-            adapter,
-            mapSpace,
-            pathfinder,
-            pois: [],
-          });
-
-        if (disposed) {
-          return;
-        }
-
-        navigationRef.current =
-          navigation;
-
-        setStatus(
-          "Ready — start AR"
-        );
-
-        // ------------------------------------------
-        // Resize
-        // ------------------------------------------
-
-        const handleResize = () => {
-          const width =
-            window.innerWidth;
-
-          const height =
-            window.innerHeight;
-
-          camera.aspect =
-            width / height;
-
-          camera.updateProjectionMatrix();
 
           renderer.setSize(
-            width,
-            height
+            window.innerWidth,
+            window.innerHeight
           );
-        };
 
-        window.addEventListener(
-          "resize",
-          handleResize
-        );
+          /**
+           * IMPORTANT
+           *
+           * WebXR must be enabled.
+           */
+          renderer.xr.enabled = true;
 
-        // ------------------------------------------
-        // Preview render loop
-        // ------------------------------------------
+          renderer.domElement.style.position =
+            "fixed";
 
-        const renderLoop = () => {
+          renderer.domElement.style.left =
+            "0";
+
+          renderer.domElement.style.top =
+            "0";
+
+          renderer.domElement.style.width =
+            "100%";
+
+          renderer.domElement.style.height =
+            "100%";
+
+          renderer.domElement.style.zIndex =
+            "0";
+
+          containerRef.current.appendChild(
+            renderer.domElement
+          );
+
+          rendererRef.current =
+            renderer;
+
+          // ----------------------------------------
+          // Scene
+          // ----------------------------------------
+
+          const scene =
+            new THREE.Scene();
+
+          /**
+           * Transparent scene so the
+           * real camera feed remains visible.
+           */
+          scene.background = null;
+
+          sceneRef.current =
+            scene;
+
+          // ----------------------------------------
+          // Camera
+          // ----------------------------------------
+
+          const camera =
+            new THREE.PerspectiveCamera(
+              70,
+              window.innerWidth /
+                window.innerHeight,
+              0.01,
+              1000
+            );
+
+          scene.add(camera);
+
+          cameraRef.current =
+            camera;
+
+          // ----------------------------------------
+          // Light
+          // ----------------------------------------
+
+          scene.add(
+            new THREE.AmbientLight(
+              0xffffff,
+              1
+            )
+          );
+
+          // ----------------------------------------
+          // MultiSet Client
+          // ----------------------------------------
+
+          setStatus(
+            "Authorizing MultiSet..."
+          );
+
+          const client =
+            new MultisetClient({
+              clientId: CLIENT_ID,
+              clientSecret: CLIENT_SECRET,
+
+              mapType: "map",
+
+              code: MAP_CODE,
+            });
+
+          await client.authorize();
+
           if (disposed) {
             return;
           }
 
-          renderer.render(
-            scene,
-            camera
+          // ----------------------------------------
+          // XR Session
+          // ----------------------------------------
+
+          setStatus(
+            "Starting MultiSet AR..."
           );
 
-          // Update the displayed current
-          // coordinate while localized.
-          if (localized) {
-            updateCurrentPosition();
-          }
+          const session =
+            new XRSessionManager(
+              renderer.getContext() as WebGL2RenderingContext,
+              {
+                client,
 
-          animationFrameRef.current =
-            requestAnimationFrame(
-              renderLoop
+                autoLocalize: true,
+
+                /**
+                 * Keep these values aligned with
+                 * the working Kokarya page.
+                 */
+                confidenceCheck: true,
+
+                onLocalizationSuccess:
+                  undefined,
+
+                onLocalizationFailure:
+                  (reason) => {
+                    console.warn(
+                      "Localization failed:",
+                      reason
+                    );
+
+                    setLocalized(false);
+
+                    setStatus(
+                      "Localization failed"
+                    );
+                  },
+
+                onError:
+                  (error) => {
+                    console.error(
+                      "MultiSet session error:",
+                      error
+                    );
+
+                    setStatus(
+                      "MultiSet error"
+                    );
+                  },
+              }
             );
-        };
 
-        renderLoop();
+          sessionRef.current =
+            session;
 
-        // Store cleanup function
-        (
-          renderer as THREE.WebGLRenderer & {
-            __destinationCleanup?: () => void;
+          // ----------------------------------------
+          // ThreeAdapter
+          // ----------------------------------------
+
+          const adapter =
+            new ThreeAdapter({
+              session,
+
+              renderer,
+
+              scene,
+
+              camera,
+
+              /**
+               * We don't need the downloaded
+               * visual map mesh on this page.
+               */
+              showMesh: false,
+
+              showGizmo: false,
+
+              /**
+               * Keep the built-in AR button.
+               */
+              useDefaultButton: true,
+
+              onLocalizationSuccess:
+                (
+                  result,
+                  worldFromMap
+                ) => {
+                  if (disposed) {
+                    return;
+                  }
+
+                  console.log(
+                    "MultiSet localized",
+                    result
+                  );
+
+                  console.log(
+                    "worldFromMap:",
+                    worldFromMap
+                  );
+
+                  /**
+                   * Store the latest
+                   * map -> world transform.
+                   */
+                  worldFromMapRef.current =
+                    worldFromMap.clone();
+
+                  setLocalized(true);
+
+                  setStatus(
+                    "Localized — walk to a destination"
+                  );
+                },
+
+              /**
+               * IMPORTANT:
+               *
+               * ThreeAdapter synchronizes
+               * the camera before this callback.
+               *
+               * We use the camera's current
+               * world position and transform
+               * it back into MAP space.
+               */
+              onXRFrame:
+                () => {
+                  if (
+                    disposed ||
+                    !worldFromMapRef.current
+                  ) {
+                    return;
+                  }
+
+                  if (!localized) {
+                    return;
+                  }
+
+                  const cameraWorldPosition =
+                    new THREE.Vector3();
+
+                  camera.getWorldPosition(
+                    cameraWorldPosition
+                  );
+
+                  /**
+                   * worldFromMap:
+                   *
+                   * MAP -> WORLD
+                   *
+                   * Therefore:
+                   *
+                   * inverse(worldFromMap):
+                   *
+                   * WORLD -> MAP
+                   */
+                  const mapFromWorld =
+                    worldFromMapRef.current
+                      .clone()
+                      .invert();
+
+                  const mapPosition =
+                    cameraWorldPosition
+                      .clone()
+                      .applyMatrix4(
+                        mapFromWorld
+                      );
+
+                  currentMapPositionRef.current =
+                    mapPosition;
+
+                  /**
+                   * Don't React-update the UI
+                   * every XR frame.
+                   *
+                   * Update roughly every
+                   * 100ms instead.
+                   */
+                  const now =
+                    performance.now();
+
+                  if (
+                    now -
+                      lastUiUpdateRef.current <
+                    100
+                  ) {
+                    return;
+                  }
+
+                  lastUiUpdateRef.current =
+                    now;
+
+                  setCurrentPosition({
+                    x: Number(
+                      mapPosition.x.toFixed(3)
+                    ),
+
+                    y: Number(
+                      mapPosition.y.toFixed(3)
+                    ),
+
+                    z: Number(
+                      mapPosition.z.toFixed(3)
+                    ),
+                  });
+                },
+            });
+
+          adapterRef.current =
+            adapter;
+
+          // ----------------------------------------
+          // Start adapter
+          // ----------------------------------------
+
+          await adapter.initialize();
+
+          if (disposed) {
+            return;
           }
-        ).__destinationCleanup = () => {
-          window.removeEventListener(
+
+          setStatus(
+            "Ready — press START AR"
+          );
+
+          // ----------------------------------------
+          // Resize
+          // ----------------------------------------
+
+          const handleResize =
+            () => {
+              if (
+                !rendererRef.current ||
+                !cameraRef.current
+              ) {
+                return;
+              }
+
+              const width =
+                window.innerWidth;
+
+              const height =
+                window.innerHeight;
+
+              cameraRef.current.aspect =
+                width / height;
+
+              cameraRef.current.updateProjectionMatrix();
+
+              rendererRef.current.setSize(
+                width,
+                height
+              );
+            };
+
+          window.addEventListener(
             "resize",
             handleResize
           );
-        };
-      } catch (error) {
-        console.error(
-          "Destination Capture initialization failed:",
-          error
-        );
 
-        setStatus(
-          error instanceof Error
-            ? error.message
-            : "Initialization failed"
-        );
-      }
-    };
+          // Cleanup attached to renderer.
+          (
+            renderer as THREE.WebGLRenderer & {
+              __destinationCaptureCleanup?: () => void;
+            }
+          ).__destinationCaptureCleanup =
+            () => {
+              window.removeEventListener(
+                "resize",
+                handleResize
+              );
+            };
+        } catch (error) {
+          console.error(
+            "Destination Capture initialization error:",
+            error
+          );
+
+          setStatus(
+            error instanceof Error
+              ? error.message
+              : "MultiSet initialization failed"
+          );
+        }
+      };
 
     void initialize();
 
     return () => {
       disposed = true;
 
-      if (
-        animationFrameRef.current
-      ) {
-        cancelAnimationFrame(
-          animationFrameRef.current
-        );
-      }
+      /**
+       * Clear references.
+       */
+      currentMapPositionRef.current =
+        null;
 
-      navigationRef.current?.dispose();
+      worldFromMapRef.current =
+        null;
 
-      pathfinderRef.current?.dispose();
-
-      mapSpaceRef.current?.dispose();
-
+      /**
+       * Adapter owns the XR render
+       * lifecycle.
+       */
       adapterRef.current?.dispose();
+
+      adapterRef.current =
+        null;
+
+      sessionRef.current =
+        null;
 
       const renderer =
         rendererRef.current;
@@ -856,9 +801,9 @@ export default function DestinationCapturePage() {
       if (renderer) {
         (
           renderer as THREE.WebGLRenderer & {
-            __destinationCleanup?: () => void;
+            __destinationCaptureCleanup?: () => void;
           }
-        ).__destinationCleanup?.();
+        ).__destinationCaptureCleanup?.();
 
         renderer.dispose();
 
@@ -870,12 +815,24 @@ export default function DestinationCapturePage() {
           );
         }
       }
+
+      rendererRef.current =
+        null;
+
+      sceneRef.current =
+        null;
+
+      cameraRef.current =
+        null;
     };
   }, []);
 
-  // --------------------------------------------------
-  // UI
-  // --------------------------------------------------
+  /**
+   * Timestamp used to avoid calling
+   * React setState on every XR frame.
+   */
+  const lastUiUpdateRef =
+    useRef(0);
 
   return (
     <main
@@ -888,7 +845,10 @@ export default function DestinationCapturePage() {
           "Arial, sans-serif",
       }}
     >
-      {/* Three.js / AR */}
+      {/* -----------------------------------------
+          AR / Three.js
+      ------------------------------------------ */}
+
       <div
         ref={containerRef}
         style={{
@@ -897,44 +857,57 @@ export default function DestinationCapturePage() {
         }}
       />
 
-      {/* UI overlay */}
+      {/* -----------------------------------------
+          UI
+      ------------------------------------------ */}
+
       <div
         style={{
           position: "absolute",
           inset: 0,
-          zIndex: 10,
+          zIndex: 20,
           pointerEvents: "none",
         }}
       >
         {/* Header */}
+
         <div
           style={{
-            margin: 20,
-            padding: 20,
-            borderRadius: 20,
+            position: "absolute",
+            top: 20,
+            left: 20,
+            right: 20,
+
+            padding: 18,
+
+            borderRadius: 18,
+
             background:
-              "rgba(20,20,24,0.92)",
-            color: "#fff",
+              "rgba(15,15,18,0.90)",
+
             backdropFilter:
-              "blur(20px)",
+              "blur(18px)",
+
+            color: "#fff",
+
             pointerEvents: "auto",
           }}
         >
-          <h1
+          <div
             style={{
-              margin: 0,
+              fontSize: 22,
+              fontWeight: 700,
               marginBottom: 8,
-              fontSize: 26,
             }}
           >
             Destination Capture
-          </h1>
+          </div>
 
           <div
             style={{
-              fontSize: 15,
-              color: "#bbb",
-              marginBottom: 8,
+              fontSize: 14,
+              color: "#aaa",
+              marginBottom: 10,
             }}
           >
             {status}
@@ -943,14 +916,14 @@ export default function DestinationCapturePage() {
           <div
             style={{
               display: "flex",
-              gap: 16,
-              fontSize: 14,
+              gap: 14,
+              fontSize: 13,
             }}
           >
             <span
               style={{
                 color: localized
-                  ? "#6cffae"
+                  ? "#4ade80"
                   : "#aaa",
               }}
             >
@@ -960,42 +933,48 @@ export default function DestinationCapturePage() {
                 : "Not localized"}
             </span>
 
-            <span
-              style={{
-                color: navMeshReady
-                  ? "#6cffae"
-                  : "#aaa",
-              }}
-            >
-              ●{" "}
-              {navMeshReady
-                ? "NavMesh ready"
-                : "NavMesh loading"}
-            </span>
+            {currentPosition && (
+              <span
+                style={{
+                  color: "#9ca3af",
+                }}
+              >
+                Position available
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Capture panel */}
+        {/* Bottom panel */}
+
         <div
           style={{
             position: "absolute",
             left: 20,
             right: 20,
             bottom: 20,
+
             maxHeight:
-              "calc(100vh - 180px)",
+              "calc(100vh - 160px)",
+
             overflowY: "auto",
+
             padding: 18,
+
             borderRadius: 20,
+
             background:
-              "rgba(20,20,24,0.94)",
+              "rgba(15,15,18,0.94)",
+
             backdropFilter:
               "blur(20px)",
+
             color: "#fff",
+
             pointerEvents: "auto",
           }}
         >
-          {/* Current coordinate */}
+          {/* Current position */}
 
           <div
             style={{
@@ -1004,9 +983,11 @@ export default function DestinationCapturePage() {
           >
             <div
               style={{
-                fontSize: 13,
-                color: "#999",
-                marginBottom: 5,
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#888",
+                letterSpacing: 1,
+                marginBottom: 7,
               }}
             >
               CURRENT MAP COORDINATE
@@ -1016,7 +997,7 @@ export default function DestinationCapturePage() {
               <div
                 style={{
                   display: "flex",
-                  gap: 16,
+                  gap: 18,
                   flexWrap: "wrap",
                   fontFamily:
                     "monospace",
@@ -1024,18 +1005,15 @@ export default function DestinationCapturePage() {
                 }}
               >
                 <span>
-                  X:{" "}
-                  {currentPosition.x}
+                  X: {currentPosition.x}
                 </span>
 
                 <span>
-                  Y:{" "}
-                  {currentPosition.y}
+                  Y: {currentPosition.y}
                 </span>
 
                 <span>
-                  Z:{" "}
-                  {currentPosition.z}
+                  Z: {currentPosition.z}
                 </span>
               </div>
             ) : (
@@ -1045,19 +1023,18 @@ export default function DestinationCapturePage() {
                   fontSize: 14,
                 }}
               >
-                Start AR and localize to
-                see your position.
+                Start AR and localize first.
               </div>
             )}
           </div>
 
-          {/* Destination input */}
+          {/* Input */}
 
           <div
             style={{
               display: "flex",
-              gap: 10,
-              marginBottom: 15,
+              gap: 8,
+              marginBottom: 16,
             }}
           >
             <input
@@ -1074,20 +1051,27 @@ export default function DestinationCapturePage() {
                   captureDestination();
                 }
               }}
-              placeholder="Destination name e.g. Panetry"
               disabled={!localized}
+              placeholder="Destination name"
               style={{
                 flex: 1,
                 minWidth: 0,
+
                 padding:
                   "13px 14px",
-                borderRadius: 12,
+
+                borderRadius: 11,
+
                 border:
                   "1px solid #444",
+
                 background: "#111",
+
                 color: "#fff",
-                outline: "none",
+
                 fontSize: 15,
+
+                outline: "none",
               }}
             />
 
@@ -1096,42 +1080,169 @@ export default function DestinationCapturePage() {
               onClick={
                 captureDestination
               }
-              disabled={
-                !localized ||
-                !navMeshReady
-              }
+              disabled={!localized}
               style={{
-                border: "none",
-                borderRadius: 12,
                 padding:
-                  "13px 18px",
+                  "13px 16px",
+
+                border: "none",
+
+                borderRadius: 11,
+
                 background:
-                  localized &&
-                  navMeshReady
+                  localized
                     ? "#00bfff"
                     : "#444",
+
                 color: "#fff",
+
                 fontWeight: 700,
+
                 cursor:
-                  localized &&
-                  navMeshReady
+                  localized
                     ? "pointer"
                     : "not-allowed",
+
                 whiteSpace:
                   "nowrap",
               }}
             >
-              Capture & Add
+              Capture
             </button>
           </div>
 
-          {/* Destination list */}
+          {/* Destination count */}
 
-          {capturedDestinations.length >
-            0 && (
+          {destinations.length > 0 && (
             <div
               style={{
-                marginBottom: 15,
+                display: "flex",
+                alignItems: "center",
+                justifyContent:
+                  "space-between",
+                marginBottom: 8,
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: 14,
+                }}
+              >
+                Captured (
+                {destinations.length})
+              </div>
+
+              <button
+                type="button"
+                onClick={clearAll}
+                style={{
+                  border:
+                    "1px solid #444",
+
+                  borderRadius: 8,
+
+                  padding:
+                    "6px 10px",
+
+                  background:
+                    "transparent",
+
+                  color: "#aaa",
+
+                  cursor: "pointer",
+                }}
+              >
+                Clear All
+              </button>
+            </div>
+          )}
+
+          {/* Destination list */}
+
+          {destinations.map(
+            (destination) => (
+              <div
+                key={destination.id}
+                style={{
+                  display: "flex",
+                  alignItems:
+                    "center",
+                  justifyContent:
+                    "space-between",
+
+                  gap: 12,
+
+                  padding:
+                    "10px 12px",
+
+                  marginBottom: 6,
+
+                  borderRadius: 10,
+
+                  background: "#111",
+                }}
+              >
+                <div
+                  style={{
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      marginBottom: 3,
+                    }}
+                  >
+                    {destination.name}
+                  </div>
+
+                  <div
+                    style={{
+                      color: "#888",
+                      fontFamily:
+                        "monospace",
+                      fontSize: 11,
+                    }}
+                  >
+                    {destination.position.x}
+                    {"  "}
+                    {destination.position.y}
+                    {"  "}
+                    {destination.position.z}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    deleteDestination(
+                      destination.id
+                    )
+                  }
+                  style={{
+                    border: "none",
+                    background:
+                      "transparent",
+                    color:
+                      "#ff6b6b",
+                    cursor:
+                      "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            )
+          )}
+
+          {/* Generated code */}
+
+          {destinations.length > 0 && (
+            <div
+              style={{
+                marginTop: 15,
               }}
             >
               <div
@@ -1144,152 +1255,33 @@ export default function DestinationCapturePage() {
                   marginBottom: 8,
                 }}
               >
-                <strong>
-                  Captured Destinations (
-                  {
-                    capturedDestinations.length
-                  }
-                  )
-                </strong>
-
-                <button
-                  type="button"
-                  onClick={clearAll}
+                <div
                   style={{
-                    border:
-                      "1px solid #555",
-                    borderRadius: 8,
-                    padding:
-                      "7px 10px",
-                    background:
-                      "transparent",
-                    color: "#aaa",
-                    cursor:
-                      "pointer",
+                    fontWeight: 700,
+                    fontSize: 14,
                   }}
                 >
-                  Clear All
-                </button>
-              </div>
-
-              {capturedDestinations.map(
-                (destination) => (
-                  <div
-                    key={
-                      destination.id
-                    }
-                    style={{
-                      display:
-                        "flex",
-                      alignItems:
-                        "center",
-                      justifyContent:
-                        "space-between",
-                      gap: 10,
-                      padding:
-                        "10px 12px",
-                      marginBottom: 6,
-                      borderRadius: 10,
-                      background:
-                        "#111",
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                        }}
-                      >
-                        {
-                          destination.name
-                        }
-                      </div>
-
-                      <div
-                        style={{
-                          color: "#999",
-                          fontFamily:
-                            "monospace",
-                          fontSize: 12,
-                          marginTop: 3,
-                        }}
-                      >
-                        {
-                          destination
-                            .position
-                            .x
-                        }
-                        {"  "}
-                        {
-                          destination
-                            .position
-                            .y
-                        }
-                        {"  "}
-                        {
-                          destination
-                            .position
-                            .z
-                        }
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        deleteDestination(
-                          destination.id
-                        )
-                      }
-                      style={{
-                        border: "none",
-                        background:
-                          "transparent",
-                        color:
-                          "#ff7777",
-                        cursor:
-                          "pointer",
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                )
-              )}
-            </div>
-          )}
-
-          {/* Generated code */}
-
-          {capturedDestinations.length >
-            0 && (
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent:
-                    "space-between",
-                  alignItems:
-                    "center",
-                  marginBottom: 8,
-                }}
-              >
-                <strong>
                   Copy-paste code
-                </strong>
+                </div>
 
                 <button
                   type="button"
                   onClick={copyCode}
                   style={{
                     border: "none",
+
                     borderRadius: 9,
+
                     padding:
                       "8px 13px",
+
                     background:
                       "#00bfff",
+
                     color: "#fff",
+
                     fontWeight: 700,
+
                     cursor:
                       "pointer",
                   }}
@@ -1301,17 +1293,26 @@ export default function DestinationCapturePage() {
               <pre
                 style={{
                   margin: 0,
+
                   padding: 15,
+
                   borderRadius: 12,
-                  background:
-                    "#080808",
+
+                  background: "#050505",
+
                   color: "#9ff",
+
+                  fontFamily:
+                    "monospace",
+
+                  fontSize: 12,
+
+                  lineHeight: 1.55,
+
                   overflowX:
                     "auto",
-                  fontSize: 12,
-                  lineHeight: 1.55,
-                  whiteSpace:
-                    "pre",
+
+                  whiteSpace: "pre",
                 }}
               >
                 {generatedCode}
