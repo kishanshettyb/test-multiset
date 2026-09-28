@@ -1462,7 +1462,7 @@ export default function KokaryaFullMapPage() {
 
       {/* DESTINATION DRAWER */}
       {!isNavigating && (
-        <div className="pointer-events-auto fixed bottom-6 left-0 right-0 z-40 flex justify-center px-4">
+        <div className="pointer-events-auto fixed bottom-20 left-0 right-0 z-40 flex justify-center px-4">
           <Drawer>
             <DrawerTrigger>
               <Button
