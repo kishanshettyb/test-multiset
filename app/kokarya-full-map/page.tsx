@@ -17,7 +17,6 @@ import {
 import {
   Navigation,
   NavMeshPathfinder,
-  buildPathRibbon,
 } from '@multisetai/vps/navigation'
 
 type Destination = {
@@ -78,10 +77,14 @@ const DESTINATIONS: Destination[] = [
   },
 ]
 
+// =============================================================
+// COMPONENT
+// =============================================================
+
 export default function KokaryaFullMapPage() {
-  // =========================================================
-  // REFS
-  // =========================================================
+  // ===========================================================
+  // THREE REFS
+  // ===========================================================
 
   const containerRef =
     useRef<HTMLDivElement | null>(null)
@@ -101,19 +104,34 @@ export default function KokaryaFullMapPage() {
   const navigationRef =
     useRef<Navigation | null>(null)
 
-  const pathMeshRef =
-    useRef<THREE.Mesh | null>(null)
+  // ===========================================================
+  // NAVIGATION VISUAL REFS
+  // ===========================================================
 
-  // Direction arrow
-  const arrowGroupRef =
+  const navigationVisualRef =
     useRef<THREE.Group | null>(null)
 
-  const arrowRef =
-    useRef<THREE.Mesh | null>(null)
+  const routeCurveRef =
+    useRef<THREE.CatmullRomCurve3 | null>(null)
 
-  // =========================================================
+  const chevronsRef =
+    useRef<THREE.Mesh[]>([])
+
+  const destinationMarkerRef =
+    useRef<THREE.Group | null>(null)
+
+  const destinationLabelRef =
+    useRef<THREE.Sprite | null>(null)
+
+  const navigationActiveRef =
+    useRef(false)
+
+  const animationTimeRef =
+    useRef(0)
+
+  // ===========================================================
   // STATE
-  // =========================================================
+  // ===========================================================
 
   const [status, setStatus] =
     useState('Initializing...')
@@ -136,91 +154,822 @@ export default function KokaryaFullMapPage() {
   const [error, setError] =
     useState('')
 
-  const [directionInstruction, setDirectionInstruction] =
+  const [showTargets, setShowTargets] =
+    useState(true)
+
+  const [isNavigating, setIsNavigating] =
+    useState(false)
+
+  const [arrivedMessage, setArrivedMessage] =
     useState('')
 
-  const [nextTurnDistance, setNextTurnDistance] =
-    useState<number | null>(null)
+  // ===========================================================
+  // CREATE CHEVRON GEOMETRY
+  // ===========================================================
 
-  // =========================================================
-  // TURN INSTRUCTION HELPER
-  // =========================================================
+  const createChevronGeometry = () => {
+    const shape =
+      new THREE.Shape()
 
-  const getTurnInstruction = (
-   corners: readonly THREE.Vector3[]
+    const width = 0.28
+    const height = 0.42
+    const thickness = 0.10
+
+    shape.moveTo(
+      -width,
+      0
+    )
+
+    shape.lineTo(
+      0,
+      height
+    )
+
+    shape.lineTo(
+      width,
+      0
+    )
+
+    shape.lineTo(
+      width * 0.42,
+      0
+    )
+
+    shape.lineTo(
+      0,
+      height * 0.52
+    )
+
+    shape.lineTo(
+      -width * 0.42,
+      0
+    )
+
+    shape.closePath()
+
+    const geometry =
+      new THREE.ShapeGeometry(
+        shape
+      )
+
+    /*
+     * ShapeGeometry is created in XY.
+     *
+     * Rotate it so it lies horizontally
+     * on the AR floor.
+     */
+    geometry.rotateX(
+      -Math.PI / 2
+    )
+
+    /*
+     * Slightly lift the chevron
+     * above the floor.
+     */
+    geometry.translate(
+      0,
+      thickness,
+      0
+    )
+
+    return geometry
+  }
+
+  // ===========================================================
+  // CREATE DESTINATION LABEL
+  // ===========================================================
+
+  const createDestinationLabel = (
+    text: string
   ) => {
-    if (corners.length < 3) {
-      return {
-        instruction: 'Walk straight',
-        distance:
-          corners.length >= 2
-            ? corners[0].distanceTo(corners[1])
-            : null,
-      }
+    const canvas =
+      document.createElement('canvas')
+
+    canvas.width = 512
+    canvas.height = 160
+
+    const context =
+      canvas.getContext('2d')
+
+    if (!context) {
+      return null
     }
 
-    const first = corners[0]
-    const second = corners[1]
-    const third = corners[2]
+    context.clearRect(
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
 
-    const incoming =
-      new THREE.Vector3(
-        second.x - first.x,
-        0,
-        second.z - first.z
-      ).normalize()
+    /*
+     * Rounded black background.
+     */
+    const radius = 36
 
-    const outgoing =
-      new THREE.Vector3(
-        third.x - second.x,
-        0,
-        third.z - second.z
-      ).normalize()
+    context.beginPath()
 
-    const cross =
-      incoming.x * outgoing.z -
-      incoming.z * outgoing.x
+    context.roundRect(
+      10,
+      10,
+      492,
+      140,
+      radius
+    )
 
-    const dot =
-      incoming.x * outgoing.x +
-      incoming.z * outgoing.z
+    context.fillStyle =
+      'rgba(15,15,18,0.92)'
 
-    const angle =
-      Math.atan2(
-        Math.abs(cross),
-        dot
-      ) *
-      (180 / Math.PI)
+    context.fill()
 
-    const distanceToTurn =
-      first.distanceTo(second)
+    /*
+     * White text.
+     */
+    context.font =
+      'bold 42px Arial'
 
-    // Small angle = mostly straight
-    if (angle < 20) {
-      return {
-        instruction: 'Walk straight',
-        distance: distanceToTurn,
-      }
+    context.textAlign =
+      'center'
+
+    context.textBaseline =
+      'middle'
+
+    context.fillStyle =
+      '#ffffff'
+
+    context.fillText(
+      text,
+      canvas.width / 2,
+      canvas.height / 2
+    )
+
+    const texture =
+      new THREE.CanvasTexture(
+        canvas
+      )
+
+    texture.needsUpdate = true
+
+    const material =
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+      })
+
+    const sprite =
+      new THREE.Sprite(
+        material
+      )
+
+    sprite.scale.set(
+      1.8,
+      0.56,
+      1
+    )
+
+    return sprite
+  }
+
+  // ===========================================================
+  // CREATE DESTINATION MARKER
+  // ===========================================================
+
+  const createDestinationMarker = (
+    destination: Destination
+  ) => {
+    const group =
+      new THREE.Group()
+
+    /*
+     * Main red sphere.
+     */
+    const sphere =
+      new THREE.Mesh(
+        new THREE.SphereGeometry(
+          0.22,
+          24,
+          24
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xff304f,
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: false,
+        })
+      )
+
+    sphere.position.y =
+      1.15
+
+    group.add(
+      sphere
+    )
+
+    /*
+     * Pin body.
+     */
+    const cone =
+      new THREE.Mesh(
+        new THREE.ConeGeometry(
+          0.16,
+          0.52,
+          24
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xff304f,
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: false,
+        })
+      )
+
+    cone.position.y =
+      0.76
+
+    cone.rotation.x =
+      Math.PI
+
+    group.add(
+      cone
+    )
+
+    /*
+     * Small glowing ring on floor.
+     */
+    const ring =
+      new THREE.Mesh(
+        new THREE.RingGeometry(
+          0.28,
+          0.38,
+          32
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xff304f,
+          transparent: true,
+          opacity: 0.55,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      )
+
+    ring.rotation.x =
+      -Math.PI / 2
+
+    ring.position.y =
+      0.04
+
+    group.add(
+      ring
+    )
+
+    /*
+     * Destination label.
+     */
+    const label =
+      createDestinationLabel(
+        destination.name
+      )
+
+    if (label) {
+      label.position.y =
+        1.72
+
+      group.add(
+        label
+      )
+
+      destinationLabelRef.current =
+        label
     }
 
-    // Positive cross = left
-    if (cross > 0) {
-      return {
-        instruction: 'Turn left',
-        distance: distanceToTurn,
-      }
+    group.position.copy(
+      destination.position
+    )
+
+    destinationMarkerRef.current =
+      group
+
+    return group
+  }
+
+  // ===========================================================
+  // CREATE ROUTE VISUAL
+  // ===========================================================
+
+  const createRouteVisual = (
+    corners: readonly THREE.Vector3[]
+  ) => {
+    const mapSpace =
+      mapSpaceRef.current
+
+    if (!mapSpace) {
+      return
     }
 
-    // Negative cross = right
-    return {
-      instruction: 'Turn right',
-      distance: distanceToTurn,
+    /*
+     * Remove old route visual.
+     */
+    if (
+      navigationVisualRef.current
+    ) {
+      mapSpace.object.remove(
+        navigationVisualRef.current
+      )
+
+      navigationVisualRef.current
+        .traverse(
+          (object) => {
+            const mesh =
+              object as THREE.Mesh
+
+            if (mesh.geometry) {
+              mesh.geometry.dispose()
+            }
+
+            const material =
+              mesh.material
+
+            if (
+              material instanceof
+              THREE.Material
+            ) {
+              material.dispose()
+            }
+          }
+        )
+    }
+
+    chevronsRef.current = []
+
+    const visualGroup =
+      new THREE.Group()
+
+    navigationVisualRef.current =
+      visualGroup
+
+    mapSpace.object.add(
+      visualGroup
+    )
+
+    // =========================================================
+    // CURVE
+    // =========================================================
+
+    const points =
+      corners.map(
+        (point) =>
+          point.clone()
+      )
+
+    const curve =
+      new THREE.CatmullRomCurve3(
+        points,
+        false,
+        'centripetal',
+        0.15
+      )
+
+    routeCurveRef.current =
+      curve
+
+    // =========================================================
+    // ROUTE RAILS
+    // =========================================================
+
+    const railMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x00c8ff,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+      })
+
+    const leftRailCurve =
+      createOffsetCurve(
+        curve,
+        0.18
+      )
+
+    const rightRailCurve =
+      createOffsetCurve(
+        curve,
+        -0.18
+      )
+
+    const railGeometryLeft =
+      new THREE.TubeGeometry(
+        leftRailCurve,
+        Math.max(
+          32,
+          points.length * 16
+        ),
+        0.018,
+        6,
+        false
+      )
+
+    const railGeometryRight =
+      new THREE.TubeGeometry(
+        rightRailCurve,
+        Math.max(
+          32,
+          points.length * 16
+        ),
+        0.018,
+        6,
+        false
+      )
+
+    const leftRail =
+      new THREE.Mesh(
+        railGeometryLeft,
+        railMaterial.clone()
+      )
+
+    const rightRail =
+      new THREE.Mesh(
+        railGeometryRight,
+        railMaterial.clone()
+      )
+
+    leftRail.position.y +=
+      0.08
+
+    rightRail.position.y +=
+      0.08
+
+    leftRail.frustumCulled =
+      false
+
+    rightRail.frustumCulled =
+      false
+
+    visualGroup.add(
+      leftRail,
+      rightRail
+    )
+
+    // =========================================================
+    // CHEVRONS
+    // =========================================================
+
+    const chevronMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x00d9ff,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        depthTest: false,
+      })
+
+    const count = 10
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+      const mesh =
+        new THREE.Mesh(
+          createChevronGeometry(),
+          chevronMaterial.clone()
+        )
+
+      mesh.frustumCulled =
+        false
+
+      /*
+       * Store initial progress
+       * in userData.
+       */
+      mesh.userData.progress =
+        i / count
+
+      visualGroup.add(
+        mesh
+      )
+
+      chevronsRef.current.push(
+        mesh
+      )
+    }
+
+    // =========================================================
+    // DESTINATION MARKER
+    // =========================================================
+
+    const destination =
+      DESTINATIONS.find(
+        (item) =>
+          item.id ===
+          selectedDestination
+      )
+
+    if (destination) {
+      const marker =
+        createDestinationMarker(
+          destination
+        )
+
+      visualGroup.add(
+        marker
+      )
     }
   }
 
-  // =========================================================
+  // ===========================================================
+  // OFFSET CURVE
+  // ===========================================================
+
+  const createOffsetCurve = (
+    source:
+      THREE.CatmullRomCurve3,
+    offset: number
+  ) => {
+    const samples =
+      Math.max(
+        40,
+        source.points.length * 20
+      )
+
+    const points:
+      THREE.Vector3[] = []
+
+    for (
+      let i = 0;
+      i <= samples;
+      i++
+    ) {
+      const t =
+        i / samples
+
+      const point =
+        source.getPointAt(
+          t
+        )
+
+      const tangent =
+        source.getTangentAt(
+          t
+        )
+
+      /*
+       * Horizontal perpendicular.
+       */
+      const side =
+        new THREE.Vector3(
+          -tangent.z,
+          0,
+          tangent.x
+        ).normalize()
+
+      point.add(
+        side.multiplyScalar(
+          offset
+        )
+      )
+
+      point.y +=
+        0.03
+
+      points.push(
+        point
+      )
+    }
+
+    return new THREE.CatmullRomCurve3(
+      points,
+      false,
+      'centripetal',
+      0.1
+    )
+  }
+
+  // ===========================================================
+  // CLEAR ROUTE VISUAL
+  // ===========================================================
+
+  const clearRouteVisual = () => {
+    const mapSpace =
+      mapSpaceRef.current
+
+    const group =
+      navigationVisualRef.current
+
+    if (
+      mapSpace &&
+      group
+    ) {
+      mapSpace.object.remove(
+        group
+      )
+
+      group.traverse(
+        (object) => {
+          const mesh =
+            object as THREE.Mesh
+
+          if (
+            mesh.geometry
+          ) {
+            mesh.geometry.dispose()
+          }
+
+          const material =
+            mesh.material
+
+          if (
+            material instanceof
+            THREE.Material
+          ) {
+            material.dispose()
+          }
+        }
+      )
+    }
+
+    navigationVisualRef.current =
+      null
+
+    routeCurveRef.current =
+      null
+
+    chevronsRef.current =
+      []
+
+    destinationMarkerRef.current =
+      null
+
+    destinationLabelRef.current =
+      null
+  }
+
+  // ===========================================================
+  // ANIMATE NAVIGATION
+  // ===========================================================
+
+  const animateNavigation = (
+    deltaSeconds: number
+  ) => {
+    if (
+      !navigationActiveRef.current
+    ) {
+      return
+    }
+
+    const curve =
+      routeCurveRef.current
+
+    if (!curve) {
+      return
+    }
+
+    animationTimeRef.current +=
+      deltaSeconds
+
+    /*
+     * Controls how quickly the
+     * chevrons travel.
+     */
+    const speed = 0.08
+
+    const travel =
+      animationTimeRef.current *
+      speed
+
+    // =========================================================
+    // CHEVRONS
+    // =========================================================
+
+    chevronsRef.current.forEach(
+      (chevron) => {
+        let progress =
+          chevron.userData.progress
+
+        progress =
+          (
+            progress +
+            travel
+          ) % 1
+
+        /*
+         * Keep chevron away from
+         * exact endpoints.
+         */
+        const t =
+          0.04 +
+          progress * 0.90
+
+        const position =
+          curve.getPointAt(
+            t
+          )
+
+        const tangent =
+          curve.getTangentAt(
+            t
+          )
+
+        chevron.position.copy(
+          position
+        )
+
+        chevron.position.y +=
+          0.12
+
+        /*
+         * Shape points toward +Z
+         * after X rotation.
+         */
+        const angle =
+          Math.atan2(
+            tangent.x,
+            tangent.z
+          )
+
+        chevron.rotation.set(
+          0,
+          angle,
+          0
+        )
+
+        /*
+         * Pulse opacity.
+         */
+        const pulse =
+          0.72 +
+          Math.sin(
+            animationTimeRef.current *
+              4 +
+              progress * 10
+          ) *
+            0.18
+
+        const material =
+          chevron.material
+
+        if (
+          material instanceof
+          THREE.MeshBasicMaterial
+        ) {
+          material.opacity =
+            pulse
+        }
+      }
+    )
+
+    // =========================================================
+    // DESTINATION PIN ANIMATION
+    // =========================================================
+
+    const marker =
+      destinationMarkerRef.current
+
+    if (marker) {
+      const pulse =
+        Math.sin(
+          animationTimeRef.current *
+            3
+        )
+
+      marker.scale.setScalar(
+        1 +
+          pulse * 0.035
+      )
+
+      const ring =
+        marker.children.find(
+          (child) =>
+            child instanceof
+            THREE.Mesh &&
+            child.geometry instanceof
+              THREE.RingGeometry
+        )
+
+      if (ring) {
+        const ringScale =
+          1 +
+          (
+            Math.sin(
+              animationTimeRef.current *
+                2
+            ) *
+            0.15
+          )
+
+        ring.scale.setScalar(
+          ringScale
+        )
+      }
+    }
+  }
+
+  // ===========================================================
   // MAIN INITIALIZATION
-  // =========================================================
+  // ===========================================================
 
   useEffect(() => {
     let disposed = false
@@ -246,20 +995,13 @@ export default function KokaryaFullMapPage() {
     let navigation:
       Navigation | null = null
 
-    let arrowGroup:
-      THREE.Group | null = null
-
     let resizeHandler:
       (() => void) | null = null
-
-    // =========================================================
-    // INIT
-    // =========================================================
 
     const init = async () => {
       try {
         // =====================================================
-        // 1. CONTAINER
+        // CONTAINER
         // =====================================================
 
         if (!containerRef.current) {
@@ -269,7 +1011,7 @@ export default function KokaryaFullMapPage() {
         }
 
         // =====================================================
-        // 2. WEBXR SUPPORT
+        // WEBXR
         // =====================================================
 
         setStatus(
@@ -285,10 +1027,12 @@ export default function KokaryaFullMapPage() {
           )
         }
 
-        if (disposed) return
+        if (disposed) {
+          return
+        }
 
         // =====================================================
-        // 3. ENVIRONMENT VARIABLES
+        // ENV
         // =====================================================
 
         const clientId =
@@ -314,7 +1058,7 @@ export default function KokaryaFullMapPage() {
         }
 
         // =====================================================
-        // 4. MULTISET CLIENT
+        // MULTISET
         // =====================================================
 
         setStatus(
@@ -331,14 +1075,16 @@ export default function KokaryaFullMapPage() {
 
         await client.authorize()
 
-        if (disposed) return
+        if (disposed) {
+          return
+        }
 
         console.log(
           '[Kokarya] MultiSet authorized'
         )
 
         // =====================================================
-        // 5. THREE RENDERER
+        // RENDERER
         // =====================================================
 
         renderer =
@@ -359,9 +1105,9 @@ export default function KokaryaFullMapPage() {
           window.innerHeight
         )
 
-        renderer.xr.enabled = true
+        renderer.xr.enabled =
+          true
 
-        // Transparent canvas
         renderer.setClearColor(
           0x000000,
           0
@@ -393,7 +1139,7 @@ export default function KokaryaFullMapPage() {
           renderer
 
         // =====================================================
-        // 6. SCENE
+        // SCENE
         // =====================================================
 
         scene =
@@ -402,7 +1148,7 @@ export default function KokaryaFullMapPage() {
         scene.background = null
 
         // =====================================================
-        // 7. CAMERA
+        // CAMERA
         // =====================================================
 
         camera =
@@ -414,10 +1160,12 @@ export default function KokaryaFullMapPage() {
             1000
           )
 
-        scene.add(camera)
+        scene.add(
+          camera
+        )
 
         // =====================================================
-        // 8. LIGHT
+        // LIGHT
         // =====================================================
 
         scene.add(
@@ -428,7 +1176,7 @@ export default function KokaryaFullMapPage() {
         )
 
         // =====================================================
-        // 9. MAP SPACE
+        // MAP SPACE
         // =====================================================
 
         mapSpace =
@@ -443,12 +1191,8 @@ export default function KokaryaFullMapPage() {
           mapSpace.object
         )
 
-        console.log(
-          '[Kokarya] MapSpace created'
-        )
-
         // =====================================================
-        // 10. LOAD NAVMESH
+        // NAVMESH
         // =====================================================
 
         setStatus(
@@ -463,21 +1207,22 @@ export default function KokaryaFullMapPage() {
             '/navigation/kokarya-nav-mesh.glb'
           )
 
-        if (disposed) return
+        if (disposed) {
+          return
+        }
 
         const navMesh =
           gltf.scene
 
-        // NavMesh belongs under MapSpace
         mapSpace.object.add(
           navMesh
         )
 
-        // Do not render raw NavMesh
-        navMesh.visible = false
+        navMesh.visible =
+          false
 
         // =====================================================
-        // 11. DEBUG NAVMESH BOUNDS
+        // NAVMESH BOUNDS
         // =====================================================
 
         const bounds =
@@ -485,38 +1230,22 @@ export default function KokaryaFullMapPage() {
             navMesh
           )
 
-        const center =
+        console.log(
+          '[Kokarya] NavMesh center:',
           bounds.getCenter(
             new THREE.Vector3()
           )
-
-        const size =
-          bounds.getSize(
-            new THREE.Vector3()
-          )
-
-        console.log(
-          '[Kokarya] NavMesh center:',
-          center
         )
 
         console.log(
           '[Kokarya] NavMesh size:',
-          size
-        )
-
-        console.log(
-          '[Kokarya] NavMesh min:',
-          bounds.min
-        )
-
-        console.log(
-          '[Kokarya] NavMesh max:',
-          bounds.max
+          bounds.getSize(
+            new THREE.Vector3()
+          )
         )
 
         // =====================================================
-        // 12. NAVMESH PATHFINDER
+        // PATHFINDER
         // =====================================================
 
         setStatus(
@@ -532,7 +1261,9 @@ export default function KokaryaFullMapPage() {
             }
           )
 
-        if (disposed) return
+        if (disposed) {
+          return
+        }
 
         pathfinderRef.current =
           pathfinder
@@ -547,7 +1278,7 @@ export default function KokaryaFullMapPage() {
         )
 
         // =====================================================
-        // 13. XR SESSION
+        // XR SESSION
         // =====================================================
 
         setStatus(
@@ -569,11 +1300,13 @@ export default function KokaryaFullMapPage() {
                     reason
                   )
 
+                  setLocalized(
+                    false
+                  )
+
                   setStatus(
                     'Localization failed'
                   )
-
-                  setLocalized(false)
                 },
 
               onError:
@@ -587,115 +1320,16 @@ export default function KokaryaFullMapPage() {
                     sessionError instanceof
                       Error
                       ? sessionError.message
-                      : String(sessionError)
+                      : String(
+                          sessionError
+                        )
                   )
                 },
             }
           )
 
         // =====================================================
-        // 14. PATH MATERIAL
-        // =====================================================
-
-        const pathMaterial =
-          new THREE.MeshBasicMaterial({
-            color: 0x00d9ff,
-
-            transparent: true,
-
-            opacity: 0.9,
-
-            side:
-              THREE.DoubleSide,
-
-            depthWrite: false,
-          })
-
-        // =====================================================
-        // 15. PATH MESH
-        // =====================================================
-
-        const pathMesh =
-          new THREE.Mesh(
-            new THREE.BufferGeometry(),
-            pathMaterial
-          )
-
-        pathMesh.frustumCulled =
-          false
-
-        pathMesh.visible =
-          false
-
-        mapSpace.object.add(
-          pathMesh
-        )
-
-        pathMeshRef.current =
-          pathMesh
-
-        // =====================================================
-        // 16. DIRECTION ARROW
-        // =====================================================
-
-        arrowGroup =
-          new THREE.Group()
-
-        arrowGroup.visible =
-          false
-
-        mapSpace.object.add(
-          arrowGroup
-        )
-
-        arrowGroupRef.current =
-          arrowGroup
-
-        /*
-         * Cone points upward by default (+Y).
-         *
-         * Rotate X by 90 degrees so it points
-         * forward along +Z.
-         */
-        const arrowGeometry =
-          new THREE.ConeGeometry(
-            0.22,
-            0.55,
-            4
-          )
-
-        const arrowMaterial =
-          new THREE.MeshBasicMaterial({
-            color: 0x00d9ff,
-            transparent: true,
-            opacity: 0.95,
-            depthWrite: false,
-          })
-
-        const arrow =
-          new THREE.Mesh(
-            arrowGeometry,
-            arrowMaterial
-          )
-
-        arrow.rotation.x =
-          Math.PI / 2
-
-        arrow.position.y =
-          0.35
-
-        arrow.frustumCulled =
-          false
-
-        arrowGroup.add(
-          arrow
-        )
-
-        arrowRef.current =
-          arrow
-
-        // =====================================================
-        // 17. THREE ADAPTER
+        // ADAPTER
         // =====================================================
 
         adapter =
@@ -712,15 +1346,20 @@ export default function KokaryaFullMapPage() {
 
             showGizmo: false,
 
+            onXRFrame:
+              ({
+                deltaSeconds,
+              }) => {
+                animateNavigation(
+                  deltaSeconds
+                )
+              },
+
             onLocalizationSuccess:
               (
                 result,
                 worldFromMap
               ) => {
-                console.log(
-                  '================================'
-                )
-
                 console.log(
                   '[Kokarya] LOCALIZED'
                 )
@@ -735,11 +1374,9 @@ export default function KokaryaFullMapPage() {
                   worldFromMap
                 )
 
-                console.log(
-                  '================================'
+                setLocalized(
+                  true
                 )
-
-                setLocalized(true)
 
                 setStatus(
                   'Localized successfully!'
@@ -751,7 +1388,7 @@ export default function KokaryaFullMapPage() {
           adapter
 
         // =====================================================
-        // 18. CONNECT MAP SPACE
+        // MAP CONNECT
         // =====================================================
 
         mapSpace.connect(
@@ -763,7 +1400,7 @@ export default function KokaryaFullMapPage() {
         )
 
         // =====================================================
-        // 19. CREATE NAVIGATION
+        // NAVIGATION
         // =====================================================
 
         setStatus(
@@ -782,7 +1419,9 @@ export default function KokaryaFullMapPage() {
               DESTINATIONS,
           })
 
-        if (disposed) return
+        if (disposed) {
+          return
+        }
 
         navigationRef.current =
           navigation
@@ -792,7 +1431,7 @@ export default function KokaryaFullMapPage() {
         )
 
         // =====================================================
-        // 20. PATH UPDATED
+        // PATH UPDATED
         // =====================================================
 
         navigation.on(
@@ -802,184 +1441,44 @@ export default function KokaryaFullMapPage() {
             remainingDistance,
           }) => {
             console.log(
-              '================================'
-            )
-
-            console.log(
-              '[Kokarya] PATH UPDATED'
-            )
-
-            console.log(
-              '[Kokarya] Corner count:',
-              corners.length
-            )
-
-            console.log(
-              '[Kokarya] Corners:',
+              '[Kokarya] PATH UPDATED',
               corners
-            )
-
-            console.log(
-              '[Kokarya] Remaining distance:',
-              remainingDistance
-            )
-
-            console.log(
-              '================================'
             )
 
             setDistance(
               remainingDistance
             )
 
-            // =================================================
-            // NO VALID PATH
-            // =================================================
+            if (
+              !navigationActiveRef.current
+            ) {
+              return
+            }
 
             if (
               corners.length < 2
             ) {
-              pathMesh.visible =
-                false
+              clearRouteVisual()
 
               setPathVisible(
                 false
               )
 
-              if (
-                arrowGroupRef.current
-              ) {
-                arrowGroupRef.current.visible =
-                  false
-              }
-
-              setDirectionInstruction(
-                ''
-              )
-
-              setNextTurnDistance(
-                null
-              )
-
               return
             }
 
-            // =================================================
-            // BUILD CYAN PATH
-            // =================================================
-
-            pathMesh.geometry.dispose()
-
-            pathMesh.geometry =
-              buildPathRibbon(
-                corners,
-                {
-                  width:
-                    0.35,
-
-                  heightAboveFloor:
-                    0.15,
-
-                  cornerRadius:
-                    0.4,
-
-                  cornerSegments:
-                    4,
-                }
-              )
-
-            pathMesh.visible =
-              true
+            createRouteVisual(
+              corners
+            )
 
             setPathVisible(
               true
             )
-
-            console.log(
-              '[Kokarya] CYAN PATH RENDERED'
-            )
-
-            // =================================================
-            // DIRECTION GUIDANCE
-            // =================================================
-
-            const guidance =
-              getTurnInstruction(
-                corners
-              )
-
-            setDirectionInstruction(
-              guidance.instruction
-            )
-
-            setNextTurnDistance(
-              guidance.distance
-            )
-
-            // =================================================
-            // POSITION ARROW
-            // =================================================
-
-            if (
-              arrowGroupRef.current &&
-              corners.length >= 2
-            ) {
-              const group =
-                arrowGroupRef.current
-
-              const first =
-                corners[0]
-
-              const second =
-                corners[1]
-
-              // Direction from first corner to second
-              const direction =
-                new THREE.Vector3()
-                  .subVectors(
-                    second,
-                    first
-                  )
-                  .setY(0)
-                  .normalize()
-
-              // Put arrow slightly ahead
-              // of current position
-              const arrowPosition =
-                first.clone().add(
-                  direction
-                    .clone()
-                    .multiplyScalar(0.8)
-                )
-
-              arrowPosition.y +=
-                0.35
-
-              group.position.copy(
-                arrowPosition
-              )
-
-              // Rotate +Z toward path direction
-              const angle =
-                Math.atan2(
-                  direction.x,
-                  direction.z
-                )
-
-              group.rotation.set(
-                0,
-                angle,
-                0
-              )
-
-              group.visible =
-                true
-            }
           }
         )
 
         // =====================================================
-        // 21. ARRIVED
+        // ARRIVED
         // =====================================================
 
         navigation.on(
@@ -990,40 +1489,47 @@ export default function KokaryaFullMapPage() {
               poi.name
             )
 
-            setStatus(
-              `Arrived at ${poi.name}`
+            navigationActiveRef.current =
+              false
+
+            setIsNavigating(
+              false
             )
 
             setDistance(
               0
             )
 
-            setDirectionInstruction(
-              'Arrived'
+            setStatus(
+              `Arrived at ${poi.name}`
             )
-
-            setNextTurnDistance(
-              0
-            )
-
-            pathMesh.visible =
-              false
 
             setPathVisible(
               false
             )
 
-            if (
-              arrowGroupRef.current
-            ) {
-              arrowGroupRef.current.visible =
-                false
-            }
+            setArrivedMessage(
+              `You have arrived at ${poi.name}!`
+            )
+
+            /*
+             * Keep destination marker
+             * visible briefly.
+             */
+            setTimeout(() => {
+              if (!disposed) {
+                clearRouteVisual()
+
+                setArrivedMessage(
+                  ''
+                )
+              }
+            }, 3500)
           }
         )
 
         // =====================================================
-        // 22. UNREACHABLE
+        // UNREACHABLE
         // =====================================================
 
         navigation.on(
@@ -1034,41 +1540,34 @@ export default function KokaryaFullMapPage() {
               poi.name
             )
 
+            navigationActiveRef.current =
+              false
+
+            setIsNavigating(
+              false
+            )
+
             setStatus(
               `No route to ${poi.name}`
             )
-
-            pathMesh.visible =
-              false
 
             setPathVisible(
               false
             )
 
-            setDirectionInstruction(
-              'No route'
-            )
-
-            setNextTurnDistance(
-              null
-            )
-
-            if (
-              arrowGroupRef.current
-            ) {
-              arrowGroupRef.current.visible =
-                false
-            }
+            clearRouteVisual()
           }
         )
 
         // =====================================================
-        // 23. INITIALIZE ADAPTER
+        // INITIALIZE
         // =====================================================
 
         await adapter.initialize()
 
-        if (disposed) return
+        if (disposed) {
+          return
+        }
 
         setStatus(
           'Ready — localizing...'
@@ -1079,7 +1578,7 @@ export default function KokaryaFullMapPage() {
         )
 
         // =====================================================
-        // 24. RESIZE
+        // RESIZE
         // =====================================================
 
         resizeHandler =
@@ -1134,12 +1633,17 @@ export default function KokaryaFullMapPage() {
     return () => {
       disposed = true
 
+      navigationActiveRef.current =
+        false
+
       if (resizeHandler) {
         window.removeEventListener(
           'resize',
           resizeHandler
         )
       }
+
+      clearRouteVisual()
 
       try {
         adapter?.dispose()
@@ -1152,40 +1656,6 @@ export default function KokaryaFullMapPage() {
       try {
         mapSpace?.dispose()
       } catch {}
-
-      // Dispose path
-      if (
-        pathMeshRef.current
-      ) {
-        pathMeshRef.current.geometry.dispose()
-
-        const material =
-          pathMeshRef.current.material
-
-        if (
-          material instanceof
-          THREE.Material
-        ) {
-          material.dispose()
-        }
-      }
-
-      // Dispose arrow
-      if (
-        arrowRef.current
-      ) {
-        arrowRef.current.geometry.dispose()
-
-        const material =
-          arrowRef.current.material
-
-        if (
-          material instanceof
-          THREE.Material
-        ) {
-          material.dispose()
-        }
-      }
 
       if (
         renderer &&
@@ -1212,18 +1682,12 @@ export default function KokaryaFullMapPage() {
 
       rendererRef.current =
         null
-
-      arrowGroupRef.current =
-        null
-
-      arrowRef.current =
-        null
     }
   }, [])
 
-  // =========================================================
+  // ===========================================================
   // START NAVIGATION
-  // =========================================================
+  // ===========================================================
 
   const startNavigation = (
     destination: Destination
@@ -1248,40 +1712,105 @@ export default function KokaryaFullMapPage() {
     }
 
     console.log(
-      '[Kokarya] Starting navigation to:',
+      '[Kokarya] Starting navigation:',
       destination.name
-    )
-
-    console.log(
-      '[Kokarya] Destination coordinate:',
-      destination.position
     )
 
     setSelectedDestination(
       destination.id
     )
 
+    setIsNavigating(
+      true
+    )
+
+    setShowTargets(
+      false
+    )
+
+    setArrivedMessage(
+      ''
+    )
+
+    navigationActiveRef.current =
+      true
+
     setStatus(
       `Navigating to ${destination.name}...`
     )
 
-    setDirectionInstruction(
-      'Calculating route...'
-    )
-
-    setNextTurnDistance(
-      null
-    )
-
-    // Actual MultiSet navigation call
+    /*
+     * Actual MultiSet navigation.
+     */
     navigation.setDestination(
       destination.id
     )
   }
 
-  // =========================================================
+  // ===========================================================
+  // STOP NAVIGATION
+  // ===========================================================
+
+  const stopNavigation = () => {
+    console.log(
+      '[Kokarya] Navigation stopped'
+    )
+
+    /*
+     * We intentionally don't call an
+     * undocumented navigation.stop()
+     * method.
+     *
+     * Instead we stop rendering the
+     * navigation visual and ignore
+     * further path updates.
+     */
+    navigationActiveRef.current =
+      false
+
+    setIsNavigating(
+      false
+    )
+
+    setSelectedDestination(
+      ''
+    )
+
+    setDistance(
+      null
+    )
+
+    setPathVisible(
+      false
+    )
+
+    setStatus(
+      localized
+        ? 'Localized — choose a destination'
+        : 'Localizing...'
+    )
+
+    clearRouteVisual()
+
+    setShowTargets(
+      true
+    )
+  }
+
+  // ===========================================================
+  // SELECTED DESTINATION
+  // ===========================================================
+
+  const selectedDestinationObject =
+    DESTINATIONS.find(
+      (item) =>
+        item.id ===
+        selectedDestination
+    )
+
+  // ===========================================================
   // UI
-  // =========================================================
+  // ===========================================================
 
   return (
     <main
@@ -1289,11 +1818,14 @@ export default function KokaryaFullMapPage() {
         position: 'fixed',
         inset: 0,
         overflow: 'hidden',
-        background: 'transparent',
+        background:
+          'transparent',
+        fontFamily:
+          'Arial, sans-serif',
       }}
     >
       {/* =====================================================
-          THREE.JS / AR
+          AR CANVAS
       ===================================================== */}
 
       <div
@@ -1302,105 +1834,213 @@ export default function KokaryaFullMapPage() {
           position: 'fixed',
           inset: 0,
           zIndex: 1,
-          pointerEvents: 'none',
+          pointerEvents:
+            'none',
         }}
       />
 
       {/* =====================================================
-          TOP STATUS
+          TOP NAVIGATION BAR
       ===================================================== */}
 
       <div
         style={{
           position: 'fixed',
-
-          top: 16,
-          left: 16,
-          right: 16,
-
-          zIndex: 20,
-
-          padding:
-            '16px 18px',
-
-          borderRadius: 20,
-
-          background:
-            'rgba(20,20,24,0.84)',
-
-          backdropFilter:
-            'blur(16px)',
-
-          WebkitBackdropFilter:
-            'blur(16px)',
-
-          color: '#fff',
-
-          fontFamily:
-            'Arial, sans-serif',
-
+          top: 18,
+          left: '50%',
+          transform:
+            'translateX(-50%)',
+          zIndex: 30,
           pointerEvents:
             'none',
         }}
       >
-        {/* TITLE */}
-
         <div
           style={{
-            fontSize: 24,
-            fontWeight: 700,
+            minWidth: 210,
+            padding:
+              '12px 18px',
+            borderRadius: 28,
+            background:
+              'rgba(15,15,18,0.86)',
+            backdropFilter:
+              'blur(16px)',
+            WebkitBackdropFilter:
+              'blur(16px)',
+            border:
+              '1px solid rgba(255,255,255,0.14)',
+            color:
+              '#ffffff',
+            textAlign:
+              'center',
+            boxShadow:
+              '0 8px 30px rgba(0,0,0,0.25)',
           }}
         >
-          Kokarya Full Map
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+            }}
+          >
+            {isNavigating &&
+            selectedDestinationObject
+              ? selectedDestinationObject.name
+              : 'Kokarya Full Map'}
+          </div>
+
+          {isNavigating &&
+            distance !== null && (
+              <div
+                style={{
+                  marginTop: 3,
+                  fontSize: 12,
+                  opacity: 0.7,
+                }}
+              >
+                {distance.toFixed(1)} m
+              </div>
+            )}
         </div>
+      </div>
 
-        {/* STATUS */}
+      {/* =====================================================
+          LOCALIZATION STATUS
+      ===================================================== */}
 
+      <div
+        style={{
+          position: 'fixed',
+          top: 20,
+          left: 18,
+          zIndex: 30,
+          pointerEvents:
+            'none',
+        }}
+      >
         <div
           style={{
-            marginTop: 6,
-            fontSize: 15,
-          }}
-        >
-          {status}
-        </div>
-
-        {/* NAVMESH GROUP COUNT */}
-
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: 13,
-            opacity: 0.7,
-          }}
-        >
-          NavMesh groups:{' '}
-          {groupCount ??
-            'loading...'}
-        </div>
-
-        {/* LOCALIZATION */}
-
-        <div
-          style={{
-            marginTop: 5,
-            fontSize: 13,
-
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            padding:
+              '8px 12px',
+            borderRadius: 18,
+            background:
+              'rgba(15,15,18,0.72)',
+            backdropFilter:
+              'blur(12px)',
+            WebkitBackdropFilter:
+              'blur(12px)',
             color:
               localized
                 ? '#75ffae'
                 : '#ffd866',
+            fontSize: 12,
           }}
         >
-          ●{' '}
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius:
+                '50%',
+              background:
+                'currentColor',
+              boxShadow:
+                localized
+                  ? '0 0 10px rgba(117,255,174,0.9)'
+                  : 'none',
+            }}
+          />
+
           {localized
             ? 'Localized'
-            : 'Not localized'}
+            : 'Localizing'}
         </div>
+      </div>
 
-        {/* TOTAL DISTANCE */}
+      {/* =====================================================
+          SHOW TARGETS
+      ===================================================== */}
 
-        {distance !== null && (
+      {isNavigating && (
+        <button
+          type="button"
+          onClick={() =>
+            setShowTargets(
+              (value) =>
+                !value
+            )
+          }
+          style={{
+            position: 'fixed',
+            top: 70,
+            left: '50%',
+            transform:
+              'translateX(-50%)',
+            zIndex: 40,
+            border:
+              '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 22,
+            padding:
+              '9px 15px',
+            background:
+              'rgba(15,15,18,0.82)',
+            backdropFilter:
+              'blur(12px)',
+            WebkitBackdropFilter:
+              'blur(12px)',
+            color:
+              '#ffffff',
+            fontSize: 12,
+            cursor:
+              'pointer',
+          }}
+        >
+          ☰{' '}
+          {showTargets
+            ? 'Hide Navigation Targets'
+            : 'Show Navigation Targets'}
+        </button>
+      )}
+
+      {/* =====================================================
+          DEBUG INFO
+      ===================================================== */}
+
+      {!isNavigating && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 70,
+            left: 18,
+            right: 18,
+            zIndex: 25,
+            padding:
+              '14px 16px',
+            borderRadius: 18,
+            background:
+              'rgba(15,15,18,0.78)',
+            backdropFilter:
+              'blur(14px)',
+            WebkitBackdropFilter:
+              'blur(14px)',
+            color:
+              '#ffffff',
+            pointerEvents:
+              'none',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 21,
+              fontWeight: 700,
+            }}
+          >
+            Kokarya Full Map
+          </div>
+
           <div
             style={{
               marginTop: 5,
@@ -1408,196 +2048,223 @@ export default function KokaryaFullMapPage() {
               opacity: 0.75,
             }}
           >
-            Distance:{' '}
-            {distance.toFixed(1)} m
+            {status}
           </div>
-        )}
 
-        {/* =================================================
-            DIRECTION INSTRUCTION
-        ================================================= */}
-
-        {directionInstruction && (
-          <div
-            style={{
-              marginTop: 10,
-
-              fontSize: 17,
-
-              fontWeight: 600,
-
-              color:
-                directionInstruction ===
-                'Arrived'
-                  ? '#75ffae'
-                  : '#00d9ff',
-            }}
-          >
-            {directionInstruction ===
-            'Turn left'
-              ? '←'
-              : directionInstruction ===
-                'Turn right'
-              ? '→'
-              : directionInstruction ===
-                'Arrived'
-              ? '✓'
-              : '↑'}{' '}
-            {directionInstruction}
-          </div>
-        )}
-
-        {/* NEXT TURN DISTANCE */}
-
-        {nextTurnDistance !== null &&
-          directionInstruction !==
-            'Arrived' && (
-            <div
-              style={{
-                marginTop: 4,
-                fontSize: 13,
-                opacity: 0.75,
-              }}
-            >
-              Next instruction in{' '}
-              {nextTurnDistance.toFixed(
-                1
-              )}{' '}
-              m
-            </div>
-          )}
-
-        {/* PATH ACTIVE */}
-
-        {pathVisible && (
           <div
             style={{
               marginTop: 5,
-              fontSize: 13,
-              color: '#00d9ff',
-            }}
-          >
-            ● Navigation path active
-          </div>
-        )}
-
-        {/* ERROR */}
-
-        {error && (
-          <div
-            style={{
-              marginTop: 10,
-
-              padding: 8,
-
-              borderRadius: 8,
-
-              background:
-                'rgba(255,0,0,0.15)',
-
-              color: '#ff9b9b',
-
               fontSize: 12,
-
-              wordBreak:
-                'break-word',
+              opacity: 0.55,
             }}
           >
-            {error}
+            NavMesh groups:{' '}
+            {groupCount ??
+              'loading...'}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* =====================================================
-          DESTINATION LIST
+          ERROR
       ===================================================== */}
 
-      <div
-        style={{
-          position: 'fixed',
+      {error && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 125,
+            left: 18,
+            right: 18,
+            zIndex: 50,
+            padding: 12,
+            borderRadius: 14,
+            background:
+              'rgba(80,0,0,0.86)',
+            color:
+              '#ffb5b5',
+            fontSize: 12,
+            wordBreak:
+              'break-word',
+          }}
+        >
+          {error}
+        </div>
+      )}
 
-          left: 16,
-          right: 16,
+      {/* =====================================================
+          DESTINATION TARGETS
+      ===================================================== */}
 
-          bottom: 24,
-
-          zIndex: 20,
-
-          display: 'flex',
-
-          gap: 8,
-
-          overflowX: 'auto',
-
-          padding:
-            '8px 2px',
-
-          pointerEvents:
-            'auto',
-
-          scrollbarWidth:
-            'none',
-        }}
-      >
-        {DESTINATIONS.map(
-          (destination) => (
-            <button
-              key={
-                destination.id
-              }
-              type="button"
-              disabled={!localized}
-              onClick={() =>
-                startNavigation(
-                  destination
-                )
-              }
-              style={{
-                flexShrink: 0,
-
-                padding:
-                  '12px 16px',
-
-                borderRadius: 14,
-
-                border:
-                  selectedDestination ===
-                  destination.id
-                    ? '2px solid #00d9ff'
-                    : '1px solid rgba(255,255,255,0.3)',
-
-                background:
-                  selectedDestination ===
-                  destination.id
-                    ? 'rgba(0,217,255,0.2)'
-                    : 'rgba(20,20,24,0.85)',
-
-                color: '#fff',
-
-                fontSize: 14,
-
-                cursor:
-                  localized
-                    ? 'pointer'
-                    : 'not-allowed',
-
-                opacity:
-                  localized
-                    ? 1
-                    : 0.5,
-
-                backdropFilter:
-                  'blur(12px)',
-
-                WebkitBackdropFilter:
-                  'blur(12px)',
-              }}
-            >
-              {destination.name}
-            </button>
-          )
+      {showTargets &&
+        !isNavigating && (
+          <div
+            style={{
+              position: 'fixed',
+              left: 14,
+              right: 14,
+              bottom: 24,
+              zIndex: 40,
+              display: 'flex',
+              gap: 9,
+              overflowX: 'auto',
+              padding:
+                '8px 2px',
+              pointerEvents:
+                'auto',
+              scrollbarWidth:
+                'none',
+            }}
+          >
+            {DESTINATIONS.map(
+              (
+                destination
+              ) => (
+                <button
+                  key={
+                    destination.id
+                  }
+                  type="button"
+                  disabled={
+                    !localized
+                  }
+                  onClick={() =>
+                    startNavigation(
+                      destination
+                    )
+                  }
+                  style={{
+                    flexShrink: 0,
+                    padding:
+                      '13px 18px',
+                    borderRadius:
+                      22,
+                    border:
+                      '1px solid rgba(255,255,255,0.2)',
+                    background:
+                      'rgba(15,15,18,0.86)',
+                    backdropFilter:
+                      'blur(14px)',
+                    WebkitBackdropFilter:
+                      'blur(14px)',
+                    color:
+                      '#ffffff',
+                    fontSize: 14,
+                    fontWeight: 500,
+                    opacity:
+                      localized
+                        ? 1
+                        : 0.45,
+                    cursor:
+                      localized
+                        ? 'pointer'
+                        : 'not-allowed',
+                  }}
+                >
+                  {destination.name}
+                </button>
+              )
+            )}
+          </div>
         )}
-      </div>
+
+      {/* =====================================================
+          STOP NAVIGATION
+      ===================================================== */}
+
+      {isNavigating && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 24,
+            zIndex: 50,
+            display: 'flex',
+            justifyContent:
+              'center',
+            pointerEvents:
+              'auto',
+          }}
+        >
+          <button
+            type="button"
+            onClick={
+              stopNavigation
+            }
+            style={{
+              padding:
+                '14px 25px',
+              borderRadius: 26,
+              border:
+                '1px solid rgba(255,255,255,0.2)',
+              background:
+                'rgba(15,15,18,0.88)',
+              backdropFilter:
+                'blur(16px)',
+              WebkitBackdropFilter:
+                'blur(16px)',
+              color:
+                '#ffffff',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor:
+                'pointer',
+              boxShadow:
+                '0 8px 30px rgba(0,0,0,0.28)',
+            }}
+          >
+            ✕&nbsp; Stop Navigation
+          </button>
+        </div>
+      )}
+
+      {/* =====================================================
+          ARRIVED TOAST
+      ===================================================== */}
+
+      {arrivedMessage && (
+        <div
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 95,
+            transform:
+              'translateX(-50%)',
+            zIndex: 60,
+            minWidth: 250,
+            padding:
+              '13px 18px',
+            borderRadius: 18,
+            background:
+              'rgba(15,15,18,0.9)',
+            backdropFilter:
+              'blur(16px)',
+            WebkitBackdropFilter:
+              'blur(16px)',
+            border:
+              '1px solid rgba(255,255,255,0.14)',
+            color:
+              '#ffffff',
+            textAlign:
+              'center',
+            fontSize: 14,
+            boxShadow:
+              '0 10px 35px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 18,
+              marginBottom: 4,
+            }}
+          >
+            ✓
+          </div>
+
+          {arrivedMessage}
+        </div>
+      )}
     </main>
   )
 }
