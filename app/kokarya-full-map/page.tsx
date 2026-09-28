@@ -9,7 +9,10 @@ import {
   XRSessionManager,
 } from '@multisetai/vps/core'
 
-import { ThreeAdapter, MapSpace } from '@multisetai/vps/three'
+import {
+  ThreeAdapter,
+  MapSpace,
+} from '@multisetai/vps/three'
 
 import {
   NavMeshPathfinder,
@@ -18,41 +21,73 @@ import {
 export default function KokaryaFullMapPage() {
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const adapterRef = useRef<ThreeAdapter | null>(null)
-  const mapSpaceRef = useRef<MapSpace | null>(null)
-  const pathfinderRef = useRef<NavMeshPathfinder | null>(null)
+  const rendererRef =
+    useRef<THREE.WebGLRenderer | null>(null)
 
-  const navMeshRef = useRef<THREE.Object3D | null>(null)
+  const sceneRef =
+    useRef<THREE.Scene | null>(null)
 
-  const [status, setStatus] = useState('Initializing...')
+  const cameraRef =
+    useRef<THREE.PerspectiveCamera | null>(null)
+
+  const adapterRef =
+    useRef<ThreeAdapter | null>(null)
+
+  const mapSpaceRef =
+    useRef<MapSpace | null>(null)
+
+  const pathfinderRef =
+    useRef<NavMeshPathfinder | null>(null)
+
+  const navMeshRef =
+    useRef<THREE.Object3D | null>(null)
+
+  const [status, setStatus] =
+    useState('Loading...')
+
   const [localizationStatus, setLocalizationStatus] =
     useState('Not localized')
 
   useEffect(() => {
     if (!containerRef.current) return
 
-    let disposed = false
-
     const container = containerRef.current
 
-    let renderer: THREE.WebGLRenderer | null = null
-    let scene: THREE.Scene | null = null
-    let camera: THREE.PerspectiveCamera | null = null
-    let adapter: ThreeAdapter | null = null
+    let disposed = false
+    let animationFrame = 0
+
+    let renderer:
+      THREE.WebGLRenderer | null = null
+
+    let scene:
+      THREE.Scene | null = null
+
+    let camera:
+      THREE.PerspectiveCamera | null = null
+
+    let adapter:
+      ThreeAdapter | null = null
+
+    let mapSpace:
+      MapSpace | null = null
 
     const init = async () => {
       try {
-        // --------------------------------------------------
-        // 1. THREE.JS RENDERER
-        // --------------------------------------------------
+        // =====================================================
+        // 1. RENDERER
+        // =====================================================
 
-        renderer = new THREE.WebGLRenderer({
-          antialias: true,
-          alpha: true,
-        })
+        renderer =
+          new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true,
+          })
 
         renderer.setPixelRatio(
-          Math.min(window.devicePixelRatio, 2)
+          Math.min(
+            window.devicePixelRatio,
+            2
+          )
         )
 
         renderer.setSize(
@@ -62,68 +97,99 @@ export default function KokaryaFullMapPage() {
 
         renderer.xr.enabled = true
 
-        container.appendChild(renderer.domElement)
+        rendererRef.current = renderer
 
-        // --------------------------------------------------
+        container.appendChild(
+          renderer.domElement
+        )
+
+        // =====================================================
         // 2. SCENE
-        // --------------------------------------------------
+        // =====================================================
 
         scene = new THREE.Scene()
 
-        // Transparent is important for AR camera view.
+        // Transparent for AR.
+        // The desktop page itself has a dark background.
         scene.background = null
 
-        // --------------------------------------------------
-        // 3. CAMERA
-        // --------------------------------------------------
+        sceneRef.current = scene
 
-        camera = new THREE.PerspectiveCamera(
-          70,
-          container.clientWidth /
-            container.clientHeight,
-          0.01,
-          100
-        )
+        // =====================================================
+        // 3. CAMERA
+        // =====================================================
+
+        camera =
+          new THREE.PerspectiveCamera(
+            60,
+            container.clientWidth /
+              container.clientHeight,
+            0.01,
+            1000
+          )
+
+        cameraRef.current = camera
 
         scene.add(camera)
 
-        // --------------------------------------------------
-        // 4. LIGHT
-        // --------------------------------------------------
+        // =====================================================
+        // 4. LIGHTS
+        // =====================================================
 
         const ambientLight =
           new THREE.AmbientLight(
             0xffffff,
-            1
+            2
           )
 
         scene.add(ambientLight)
 
-        // --------------------------------------------------
-        // 5. MAP SPACE
-        // --------------------------------------------------
+        const directionalLight =
+          new THREE.DirectionalLight(
+            0xffffff,
+            2
+          )
 
-        const mapSpace = new MapSpace(
-          new THREE.Object3D()
+        directionalLight.position.set(
+          10,
+          20,
+          10
         )
 
-        mapSpaceRef.current = mapSpace
+        scene.add(
+          directionalLight
+        )
 
-        scene.add(mapSpace.object)
+        // =====================================================
+        // 5. MAP SPACE
+        // =====================================================
+
+        mapSpace =
+          new MapSpace(
+            new THREE.Object3D()
+          )
+
+        mapSpaceRef.current =
+          mapSpace
+
+        scene.add(
+          mapSpace.object
+        )
 
         console.log(
           '[Kokarya] MapSpace created'
         )
 
-        // --------------------------------------------------
+        // =====================================================
         // 6. LOAD NAVMESH
-        // --------------------------------------------------
+        // =====================================================
 
         setStatus(
           'Loading Kokarya NavMesh...'
         )
 
-        const loader = new GLTFLoader()
+        const loader =
+          new GLTFLoader()
 
         const gltf =
           await loader.loadAsync(
@@ -132,18 +198,22 @@ export default function KokaryaFullMapPage() {
 
         if (disposed) return
 
-        const navMesh = gltf.scene
+        const navMesh =
+          gltf.scene
 
-        navMeshRef.current = navMesh
+        navMeshRef.current =
+          navMesh
 
-        // NavMesh lives inside MapSpace.
-        mapSpace.object.add(navMesh)
+        // NavMesh belongs to MapSpace.
+        mapSpace.object.add(
+          navMesh
+        )
 
         navMesh.visible = true
 
-        // --------------------------------------------------
-        // 7. NAVMESH BOUNDS
-        // --------------------------------------------------
+        // =====================================================
+        // 7. CALCULATE BOUNDS
+        // =====================================================
 
         const box =
           new THREE.Box3().setFromObject(
@@ -161,7 +231,11 @@ export default function KokaryaFullMapPage() {
           )
 
         console.log(
-          '[Kokarya] NavMesh loaded'
+          '================================'
+        )
+
+        console.log(
+          '[Kokarya] NAVMESH LOADED'
         )
 
         console.log(
@@ -184,16 +258,103 @@ export default function KokaryaFullMapPage() {
           box.max
         )
 
-        setStatus(
-          `NavMesh loaded — ` +
-          `${size.x.toFixed(2)} × ` +
-          `${size.y.toFixed(2)} × ` +
-          `${size.z.toFixed(2)} m`
+        console.log(
+          '================================'
         )
 
-        // --------------------------------------------------
-        // 8. MULTISET CLIENT
-        // --------------------------------------------------
+        // =====================================================
+        // 8. POSITION DESKTOP CAMERA
+        // =====================================================
+
+        const maxDimension =
+          Math.max(
+            size.x,
+            size.y,
+            size.z
+          )
+
+        camera.position.set(
+          center.x +
+            maxDimension * 1.4,
+
+          center.y +
+            maxDimension * 1.0,
+
+          center.z +
+            maxDimension * 1.4
+        )
+
+        camera.lookAt(
+          center
+        )
+
+        // =====================================================
+        // 9. NAVMESH PATHFINDER
+        // =====================================================
+
+        setStatus(
+          'Creating NavMesh Pathfinder...'
+        )
+
+        const pathfinder =
+          await NavMeshPathfinder
+            .fromObject3D(
+              navMesh,
+              {
+                space:
+                  mapSpace.object,
+              }
+            )
+
+        if (disposed) return
+
+        pathfinderRef.current =
+          pathfinder
+
+        console.log(
+          '[Kokarya] Pathfinder created'
+        )
+
+        console.log(
+          '[Kokarya] NavMesh groups:',
+          pathfinder.groupCount
+        )
+
+        setStatus(
+          `NavMesh ready — ${
+            pathfinder.groupCount
+          } navigation group(s)`
+        )
+
+        // =====================================================
+        // 10. NORMAL DESKTOP RENDER LOOP
+        // =====================================================
+
+        const renderPreview = () => {
+          if (disposed) return
+
+          animationFrame =
+            requestAnimationFrame(
+              renderPreview
+            )
+
+          if (
+            renderer &&
+            scene &&
+            camera
+          ) {
+            renderer.render(
+              scene,
+              camera
+            )
+          }
+        }
+
+        renderPreview()
+
+        // =====================================================
+        // 11. MULTISET CLIENT
+        // =====================================================
 
         const client =
           new MultisetClient({
@@ -224,9 +385,9 @@ export default function KokaryaFullMapPage() {
           '[Kokarya] MultiSet authorized'
         )
 
-        // --------------------------------------------------
-        // 9. XR SESSION
-        // --------------------------------------------------
+        // =====================================================
+        // 12. XR SESSION
+        // =====================================================
 
         const session =
           new XRSessionManager(
@@ -253,20 +414,20 @@ export default function KokaryaFullMapPage() {
                 error
               ) => {
                 console.error(
-                  '[Kokarya] Session error:',
+                  '[Kokarya] XR error:',
                   error
                 )
 
                 setStatus(
-                  'MultiSet session error'
+                  'XR error'
                 )
               },
             }
           )
 
-        // --------------------------------------------------
-        // 10. THREE ADAPTER
-        // --------------------------------------------------
+        // =====================================================
+        // 13. THREE ADAPTER
+        // =====================================================
 
         adapter =
           new ThreeAdapter({
@@ -278,6 +439,9 @@ export default function KokaryaFullMapPage() {
 
             camera,
 
+            // IMPORTANT:
+            // Don't download/display MultiSet's
+            // own map mesh here.
             showMesh: false,
 
             showGizmo: true,
@@ -295,13 +459,13 @@ export default function KokaryaFullMapPage() {
               )
 
               console.log(
-                'Confidence:',
+                '[Kokarya] Confidence:',
                 result.localizeData
                   ?.confidence
               )
 
               console.log(
-                'worldFromMap:',
+                '[Kokarya] worldFromMap:',
                 worldFromMap
               )
 
@@ -312,89 +476,42 @@ export default function KokaryaFullMapPage() {
               setLocalizationStatus(
                 `Localized — confidence: ${
                   result.localizeData
-                    ?.confidence
-                    ?.toFixed?.(2) ??
+                    ?.confidence ??
                   'unknown'
                 }`
               )
-
-              /*
-               * IMPORTANT
-               *
-               * MultiSet gives us a matrix that
-               * converts MAP coordinates into
-               * THREE WORLD coordinates.
-               *
-               * MapSpace handles this transform
-               * for the navigation system.
-               */
             },
 
             onXRFrame: ({
               deltaSeconds,
             }) => {
-              // Reserved for navigation
-              // animation later.
+              // Navigation will be added here later.
 
               void deltaSeconds
             },
           })
 
-        adapterRef.current = adapter
+        adapterRef.current =
+          adapter
 
-        // --------------------------------------------------
-        // 11. CONNECT MAPSPACE TO MULTISET
-        // --------------------------------------------------
+        // =====================================================
+        // 14. CONNECT MAPSPACE
+        // =====================================================
 
-        mapSpace.connect(adapter)
-
-        console.log(
-          '[Kokarya] MapSpace connected to MultiSet'
-        )
-
-        // --------------------------------------------------
-        // 12. CREATE NAVMESH PATHFINDER
-        // --------------------------------------------------
-
-        setStatus(
-          'Creating NavMesh Pathfinder...'
-        )
-
-        const pathfinder =
-          await NavMeshPathfinder
-            .fromObject3D(
-              navMesh,
-              {
-                space:
-                  mapSpace.object,
-              }
-            )
-
-        if (disposed) return
-
-        pathfinderRef.current =
-          pathfinder
-
-        console.log(
-          '[Kokarya] NavMesh Pathfinder created'
+        mapSpace.connect(
+          adapter
         )
 
         console.log(
-          '[Kokarya] NavMesh groups:',
-          pathfinder.groupCount
+          '[Kokarya] MapSpace connected'
         )
 
-        setStatus(
-          `NavMesh ready — ` +
-          `${pathfinder.groupCount} navigation group(s)`
-        )
-
-        // --------------------------------------------------
-        // 13. START MULTISET
-        // --------------------------------------------------
+        // =====================================================
+        // 15. INITIALIZE MULTISET
+        // =====================================================
 
         console.log(
-          '[Kokarya] Starting MultiSet...'
+          '[Kokarya] Initializing MultiSet...'
         )
 
         adapter.initialize()
@@ -403,15 +520,15 @@ export default function KokaryaFullMapPage() {
           '[Kokarya] MultiSet initialized'
         )
 
-        // --------------------------------------------------
-        // 14. RESIZE
-        // --------------------------------------------------
+        // =====================================================
+        // 16. RESIZE
+        // =====================================================
 
         const handleResize = () => {
           if (
             !containerRef.current ||
-            !camera ||
-            !renderer
+            !renderer ||
+            !camera
           ) {
             return
           }
@@ -440,9 +557,9 @@ export default function KokaryaFullMapPage() {
           handleResize
         )
 
-        // --------------------------------------------------
-        // 15. CLEANUP
-        // --------------------------------------------------
+        // =====================================================
+        // CLEANUP
+        // =====================================================
 
         return () => {
           window.removeEventListener(
@@ -462,32 +579,41 @@ export default function KokaryaFullMapPage() {
       }
     }
 
-    let cleanup: (() => void) | undefined
+    init()
 
-    init().then((result) => {
-      cleanup = result
-    })
+    // =======================================================
+    // GLOBAL CLEANUP
+    // =======================================================
 
     return () => {
       disposed = true
 
-      cleanup?.()
+      cancelAnimationFrame(
+        animationFrame
+      )
 
       if (adapter) {
         try {
           adapter.dispose()
         } catch (error) {
           console.warn(
-            '[Kokarya] Adapter cleanup error:',
+            '[Kokarya] Adapter dispose error:',
             error
           )
         }
       }
 
-      adapterRef.current = null
-      mapSpaceRef.current = null
-      pathfinderRef.current = null
-      navMeshRef.current = null
+      adapterRef.current =
+        null
+
+      mapSpaceRef.current =
+        null
+
+      pathfinderRef.current =
+        null
+
+      navMeshRef.current =
+        null
 
       if (renderer) {
         renderer.dispose()
@@ -506,9 +632,13 @@ export default function KokaryaFullMapPage() {
   }, [])
 
   return (
-    <main className="relative min-h-screen bg-black text-white">
-      {/* Header */}
-      <div className="absolute left-0 top-0 z-20 w-full bg-black/70 p-4 backdrop-blur">
+    <main className="relative min-h-screen overflow-hidden bg-black text-white">
+
+      {/* ---------------------------------------------- */}
+      {/* STATUS PANEL                                   */}
+      {/* ---------------------------------------------- */}
+
+      <div className="absolute left-0 top-0 z-50 w-full bg-black/80 p-4 backdrop-blur">
         <h1 className="text-xl font-semibold">
           Kokarya Full Map
         </h1>
@@ -522,11 +652,15 @@ export default function KokaryaFullMapPage() {
         </p>
       </div>
 
-      {/* Three.js / WebXR */}
+      {/* ---------------------------------------------- */}
+      {/* THREE.JS                                       */}
+      {/* ---------------------------------------------- */}
+
       <div
         ref={containerRef}
         className="h-screen w-full"
       />
+
     </main>
   )
 }
