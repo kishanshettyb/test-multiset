@@ -15,12 +15,17 @@ import {
 } from '@multisetai/vps/three'
 
 import {
+  Navigation,
   NavMeshPathfinder,
+  buildPathRibbon,
 } from '@multisetai/vps/navigation'
 
 export default function KokaryaFullMapPage() {
   const containerRef =
     useRef<HTMLDivElement | null>(null)
+
+  const rendererRef =
+    useRef<THREE.WebGLRenderer | null>(null)
 
   const adapterRef =
     useRef<ThreeAdapter | null>(null)
@@ -34,17 +39,32 @@ export default function KokaryaFullMapPage() {
   const pathfinderRef =
     useRef<NavMeshPathfinder | null>(null)
 
+  const navigationRef =
+    useRef<Navigation | null>(null)
+
+  const pathMeshRef =
+    useRef<THREE.Mesh | null>(null)
+
+  const animationTimeRef =
+    useRef(0)
+
   const [status, setStatus] =
     useState('Initializing...')
 
-  const [error, setError] =
-    useState('')
+  const [localized, setLocalized] =
+    useState(false)
 
   const [groupCount, setGroupCount] =
     useState<number | null>(null)
 
-  const [localized, setLocalized] =
-    useState(false)
+  const [remainingDistance, setRemainingDistance] =
+    useState<number | null>(null)
+
+  const [navigationState, setNavigationState] =
+    useState('unlocalized')
+
+  const [error, setError] =
+    useState('')
 
   useEffect(() => {
     let disposed = false
@@ -58,268 +78,303 @@ export default function KokaryaFullMapPage() {
     let camera:
       THREE.PerspectiveCamera | null = null
 
-    async function init() {
-      try {
-        /* =====================================================
-           1. CHECK WEBXR
-        ===================================================== */
+    let adapter:
+      ThreeAdapter | null = null
 
-        setStatus(
-          'Checking WebXR...'
-        )
+    let mapSpace:
+      MapSpace | null = null
 
-        const supported =
-          await ThreeAdapter.isSupported()
+    let navigation:
+      Navigation | null = null
 
-        if (!supported) {
-          throw new Error(
-            'WebXR immersive AR is not supported on this device/browser.'
-          )
-        }
+    let resizeHandler:
+      (() => void) | null = null
 
-        if (disposed) {
-          return
-        }
+    try {
+      // =====================================================
+      // MAIN INITIALIZATION
+      // =====================================================
 
-        /* =====================================================
-           2. MULTISET ENVIRONMENT
-        ===================================================== */
+      const init = async () => {
+        try {
+          // ===================================================
+          // 1. CHECK WEBXR
+          // ===================================================
 
-        const clientId =
-          process.env
-            .NEXT_PUBLIC_MULTISET_CLIENT_ID
-
-        const clientSecret =
-          process.env
-            .NEXT_PUBLIC_MULTISET_CLIENT_SECRET
-
-        const mapCode =
-          process.env
-            .NEXT_PUBLIC_MULTISET_MAP_CODE
-
-        if (
-          !clientId ||
-          !clientSecret ||
-          !mapCode
-        ) {
-          throw new Error(
-            'Missing MultiSet environment variables.'
-          )
-        }
-
-        /* =====================================================
-           3. CONNECT MULTISET
-        ===================================================== */
-
-        setStatus(
-          'Connecting to MultiSet...'
-        )
-
-        const client =
-          new MultisetClient({
-            clientId,
-            clientSecret,
-            mapType: 'map',
-            code: mapCode,
-          })
-
-        await client.authorize()
-
-        if (disposed) {
-          return
-        }
-
-        /* =====================================================
-           4. RENDERER
-           
-           IMPORTANT:
-           This is copied from your working
-           navigation page.
-        ===================================================== */
-
-        setStatus(
-          'Creating AR renderer...'
-        )
-
-        renderer =
-          new THREE.WebGLRenderer({
-            antialias: true,
-            alpha: true,
-          })
-
-        renderer.setPixelRatio(
-          Math.min(
-            window.devicePixelRatio,
-            2
-          )
-        )
-
-        renderer.setSize(
-          window.innerWidth,
-          window.innerHeight
-        )
-
-        /*
-         * Transparent WebXR canvas.
-         *
-         * This allows the real camera
-         * to appear behind the Three.js content.
-         */
-        renderer.setClearColor(
-          0x000000,
-          0
-        )
-
-        renderer.domElement.style.position =
-          'fixed'
-
-        renderer.domElement.style.inset =
-          '0'
-
-        renderer.domElement.style.width =
-          '100%'
-
-        renderer.domElement.style.height =
-          '100%'
-
-        renderer.domElement.style.zIndex =
-          '0'
-
-        containerRef.current?.appendChild(
-          renderer.domElement
-        )
-
-        /* =====================================================
-           5. SCENE
-        ===================================================== */
-
-        scene =
-          new THREE.Scene()
-
-        /* =====================================================
-           6. CAMERA
-        ===================================================== */
-
-        camera =
-          new THREE.PerspectiveCamera(
-            70,
-            window.innerWidth /
-              window.innerHeight,
-            0.01,
-            1000
+          setStatus(
+            'Checking WebXR support...'
           )
 
-        /* =====================================================
-           7. MAP SPACE
-        ===================================================== */
+          const supported =
+            await ThreeAdapter.isSupported()
 
-        const mapSpace =
-          new MapSpace(
-            new THREE.Object3D()
+          if (!supported) {
+            throw new Error(
+              'WebXR immersive AR is not supported on this device.'
+            )
+          }
+
+          if (disposed) return
+
+          // ===================================================
+          // 2. MULTISET CREDENTIALS
+          // ===================================================
+
+          const clientId =
+            process.env
+              .NEXT_PUBLIC_MULTISET_CLIENT_ID
+
+          const clientSecret =
+            process.env
+              .NEXT_PUBLIC_MULTISET_CLIENT_SECRET
+
+          const mapCode =
+            process.env
+              .NEXT_PUBLIC_MULTISET_MAP_CODE
+
+          if (
+            !clientId ||
+            !clientSecret ||
+            !mapCode
+          ) {
+            throw new Error(
+              'Missing MultiSet environment variables.'
+            )
+          }
+
+          // ===================================================
+          // 3. MULTISET CLIENT
+          // ===================================================
+
+          setStatus(
+            'Connecting to MultiSet...'
           )
 
-        mapSpaceRef.current =
-          mapSpace
+          const client =
+            new MultisetClient({
+              clientId,
+              clientSecret,
+              mapType: 'map',
+              code: mapCode,
+            })
 
-        scene.add(
-          mapSpace.object
-        )
+          await client.authorize()
 
-        console.log(
-          '[Kokarya] MapSpace created'
-        )
+          if (disposed) return
 
-        /* =====================================================
-           8. LOAD KOKARYA NAVMESH
-        ===================================================== */
-
-        setStatus(
-          'Loading Kokarya NavMesh...'
-        )
-
-        const loader =
-          new GLTFLoader()
-
-        const gltf =
-          await loader.loadAsync(
-            '/navigation/kokarya-nav-mesg-threejs.glb'
+          console.log(
+            '[Kokarya] MultiSet authorized'
           )
 
-        if (disposed) {
-          return
-        }
+          // ===================================================
+          // 4. THREE RENDERER
+          // ===================================================
 
-        const navMesh =
-          gltf.scene
+          renderer =
+            new THREE.WebGLRenderer({
+              antialias: true,
+              alpha: true,
+            })
 
-        navMeshRef.current =
-          navMesh
+          renderer.setPixelRatio(
+            Math.min(
+              window.devicePixelRatio,
+              2
+            )
+          )
 
-        /*
-         * VERY IMPORTANT:
-         *
-         * NavMesh is placed INSIDE MapSpace.
-         */
-        mapSpace.object.add(
-          navMesh
-        )
+          renderer.setSize(
+            window.innerWidth,
+            window.innerHeight
+          )
 
-        navMesh.visible = true
+          renderer.xr.enabled = true
 
-        console.log(
-          '[Kokarya] NavMesh loaded'
-        )
+          /*
+           * IMPORTANT
+           *
+           * Transparent canvas allows
+           * Android camera feed to appear.
+           */
 
-        /* =====================================================
-           9. NAVMESH BOUNDS
-        ===================================================== */
+          renderer.setClearColor(
+            0x000000,
+            0
+          )
 
-        const box =
-          new THREE.Box3().setFromObject(
+          renderer.domElement.style.position =
+            'fixed'
+
+          renderer.domElement.style.left =
+            '0'
+
+          renderer.domElement.style.top =
+            '0'
+
+          renderer.domElement.style.width =
+            '100%'
+
+          renderer.domElement.style.height =
+            '100%'
+
+          renderer.domElement.style.zIndex =
+            '0'
+
+          rendererRef.current =
+            renderer
+
+          containerRef.current?.appendChild(
+            renderer.domElement
+          )
+
+          // ===================================================
+          // 5. SCENE
+          // ===================================================
+
+          scene =
+            new THREE.Scene()
+
+          scene.background = null
+
+          // ===================================================
+          // 6. CAMERA
+          // ===================================================
+
+          camera =
+            new THREE.PerspectiveCamera(
+              70,
+              window.innerWidth /
+                window.innerHeight,
+              0.01,
+              1000
+            )
+
+          scene.add(camera)
+
+          // ===================================================
+          // 7. LIGHT
+          // ===================================================
+
+          scene.add(
+            new THREE.AmbientLight(
+              0xffffff,
+              1
+            )
+          )
+
+          // ===================================================
+          // 8. MAP SPACE
+          // ===================================================
+
+          mapSpace =
+            new MapSpace(
+              new THREE.Object3D()
+            )
+
+          mapSpaceRef.current =
+            mapSpace
+
+          scene.add(
+            mapSpace.object
+          )
+
+          console.log(
+            '[Kokarya] MapSpace created'
+          )
+
+          // ===================================================
+          // 9. LOAD NAVMESH GLB
+          // ===================================================
+
+          setStatus(
+            'Loading Kokarya NavMesh...'
+          )
+
+          const loader =
+            new GLTFLoader()
+
+          const gltf =
+            await loader.loadAsync(
+              '/navigation/kokarya-nav-mesg-threejs.glb'
+            )
+
+          if (disposed) return
+
+          const navMesh =
+            gltf.scene
+
+          navMeshRef.current =
+            navMesh
+
+          /*
+           * IMPORTANT
+           *
+           * NavMesh belongs to MapSpace.
+           */
+
+          mapSpace.object.add(
             navMesh
           )
 
-        const center =
-          box.getCenter(
-            new THREE.Vector3()
+          /*
+           * We DO NOT want to display
+           * the raw NavMesh.
+           *
+           * Your black polygons were
+           * exactly this geometry.
+           */
+
+          navMesh.visible = false
+
+          // ===================================================
+          // 10. NAVMESH BOUNDS
+          // ===================================================
+
+          const bounds =
+            new THREE.Box3().setFromObject(
+              navMesh
+            )
+
+          const center =
+            bounds.getCenter(
+              new THREE.Vector3()
+            )
+
+          const size =
+            bounds.getSize(
+              new THREE.Vector3()
+            )
+
+          console.log(
+            '[Kokarya] NavMesh center:',
+            center
           )
 
-        const size =
-          box.getSize(
-            new THREE.Vector3()
+          console.log(
+            '[Kokarya] NavMesh size:',
+            size
           )
 
-        console.log(
-          '[Kokarya] NavMesh center:',
-          center
-        )
+          console.log(
+            '[Kokarya] NavMesh min:',
+            bounds.min
+          )
 
-        console.log(
-          '[Kokarya] NavMesh size:',
-          size
-        )
+          console.log(
+            '[Kokarya] NavMesh max:',
+            bounds.max
+          )
 
-        console.log(
-          '[Kokarya] NavMesh min:',
-          box.min
-        )
+          // ===================================================
+          // 11. CREATE PATHFINDER
+          // ===================================================
 
-        console.log(
-          '[Kokarya] NavMesh max:',
-          box.max
-        )
+          setStatus(
+            'Creating NavMesh Pathfinder...'
+          )
 
-        /* =====================================================
-           10. NAVMESH PATHFINDER
-        ===================================================== */
-
-        setStatus(
-          'Creating NavMesh Pathfinder...'
-        )
-
-        const pathfinder =
-          await NavMeshPathfinder
-            .fromObject3D(
+          const pathfinder =
+            await NavMeshPathfinder.fromObject3D(
               navMesh,
               {
                 space:
@@ -327,332 +382,685 @@ export default function KokaryaFullMapPage() {
               }
             )
 
-        if (disposed) {
-          return
-        }
+          if (disposed) return
 
-        pathfinderRef.current =
-          pathfinder
+          pathfinderRef.current =
+            pathfinder
 
-        setGroupCount(
-          pathfinder.groupCount
-        )
+          setGroupCount(
+            pathfinder.groupCount
+          )
 
-        console.log(
-          '[Kokarya] Pathfinder created'
-        )
+          console.log(
+            '[Kokarya] Pathfinder created'
+          )
 
-        console.log(
-          '[Kokarya] NavMesh groups:',
-          pathfinder.groupCount
-        )
+          console.log(
+            '[Kokarya] NavMesh groups:',
+            pathfinder.groupCount
+          )
 
-        /* =====================================================
-           11. XR SESSION
-           
-           This section follows your working
-           navigation page.
-        ===================================================== */
+          // ===================================================
+          // 12. XR SESSION
+          // ===================================================
 
-        setStatus(
-          'Creating MultiSet XR session...'
-        )
+          setStatus(
+            'Creating AR session...'
+          )
 
-        const session =
-          new XRSessionManager(
-            renderer.getContext() as WebGL2RenderingContext,
-            {
-              client,
+          const session =
+            new XRSessionManager(
+              renderer.getContext() as WebGL2RenderingContext,
+              {
+                client,
 
-              autoLocalize: true,
+                autoLocalize: true,
 
-              referenceSpaceType:
-                'local',
+                referenceSpaceType:
+                  'local',
 
-              confidenceCheck:
-                true,
+                confidenceCheck: true,
 
-              confidenceThreshold:
-                0.5,
+                confidenceThreshold:
+                  0.5,
 
-              onSessionStart: () => {
-                console.log(
-                  '[Kokarya] XR SESSION STARTED'
-                )
+                onSessionStart: () => {
+                  console.log(
+                    '[Kokarya] AR session started'
+                  )
 
-                setStatus(
-                  'Scanning...'
-                )
+                  setStatus(
+                    'Scanning...'
+                  )
+
+                  /*
+                   * Hide desktop canvas while
+                   * immersive AR is active.
+                   *
+                   * MultiSet renders directly
+                   * into the XR framebuffer.
+                   */
+
+                  if (
+                    renderer
+                  ) {
+                    renderer.domElement.style.display =
+                      'none'
+                  }
+                },
+
+                onSessionEnd: () => {
+                  console.log(
+                    '[Kokarya] AR session ended'
+                  )
+
+                  setLocalized(
+                    false
+                  )
+
+                  setNavigationState(
+                    'unlocalized'
+                  )
+
+                  /*
+                   * Show preview canvas again.
+                   */
+
+                  if (
+                    renderer
+                  ) {
+                    renderer.domElement.style.display =
+                      'block'
+                  }
+                },
+
+                onLocalizationInit: () => {
+                  console.log(
+                    '[Kokarya] Localization started'
+                  )
+
+                  setStatus(
+                    'Scanning...'
+                  )
+                },
+
+                onLocalizationResult:
+                  (
+                    result: any
+                  ) => {
+                    console.log(
+                      '[Kokarya] Localization result:',
+                      result
+                    )
+                  },
+
+                onLocalizationFailure:
+                  (
+                    reason: any
+                  ) => {
+                    console.warn(
+                      '[Kokarya] Localization failed:',
+                      reason
+                    )
+
+                    setStatus(
+                      'Localization failed'
+                    )
+                  },
+
+                onError: (
+                  sessionError: any
+                ) => {
+                  console.error(
+                    '[Kokarya] XR error:',
+                    sessionError
+                  )
+
+                  setError(
+                    sessionError?.message ||
+                    String(sessionError)
+                  )
+                },
+              }
+            )
+
+          // ===================================================
+          // 13. PATH MATERIAL
+          // ===================================================
+
+          /*
+           * This is the visible navigation
+           * ribbon.
+           *
+           * We start with a simple material.
+           * Later we can replace this with
+           * an arrow texture/shader.
+           */
+
+          const pathMaterial =
+            new THREE.MeshBasicMaterial({
+              color: 0x00d9ff,
+
+              transparent: true,
+
+              opacity: 0.9,
+
+              side:
+                THREE.DoubleSide,
+
+              depthWrite: false,
+            })
+
+          // ===================================================
+          // 14. PATH MESH
+          // ===================================================
+
+          const pathMesh =
+            new THREE.Mesh(
+              new THREE.BufferGeometry(),
+              pathMaterial
+            )
+
+          pathMesh.frustumCulled =
+            false
+
+          pathMesh.visible =
+            false
+
+          pathMeshRef.current =
+            pathMesh
+
+          /*
+           * Path belongs to MapSpace.
+           */
+
+          mapSpace.object.add(
+            pathMesh
+          )
+
+          // ===================================================
+          // 15. THREE ADAPTER
+          // ===================================================
+
+          adapter =
+            new ThreeAdapter({
+              session,
+
+              renderer,
+
+              scene,
+
+              camera,
+
+              /*
+               * Don't render MultiSet's
+               * map mesh.
+               */
+
+              showMesh: false,
+
+              showGizmo: false,
+
+              useDefaultButton: true,
+
+              onLocalizationSuccess:
+                (
+                  result: any,
+                  worldFromMap: THREE.Matrix4
+                ) => {
+                  console.log(
+                    '================================'
+                  )
+
+                  console.log(
+                    '[Kokarya] LOCALIZATION SUCCESS'
+                  )
+
+                  console.log(
+                    '[Kokarya] Confidence:',
+                    result
+                      ?.localizeData
+                      ?.confidence
+                  )
+
+                  console.log(
+                    '[Kokarya] worldFromMap:',
+                    worldFromMap
+                  )
+
+                  console.log(
+                    '================================'
+                  )
+
+                  setLocalized(
+                    true
+                  )
+
+                  setStatus(
+                    'Localized successfully!'
+                  )
+                },
+
+              onXRFrame: ({
+                deltaSeconds,
+              }) => {
+                /*
+                 * Navigation.tick is internally
+                 * handled by Navigation.
+                 *
+                 * We keep this callback available
+                 * for our future animation system.
+                 */
+
+                animationTimeRef.current +=
+                  deltaSeconds
               },
+            })
 
-              onSessionEnd: () => {
-                console.log(
-                  '[Kokarya] XR SESSION ENDED'
-                )
+          adapterRef.current =
+            adapter
 
-                setLocalized(false)
+          // ===================================================
+          // 16. CONNECT MAP SPACE
+          // ===================================================
 
-                setStatus(
-                  'AR session ended'
-                )
-              },
+          mapSpace.connect(
+            adapter
+          )
 
-              onLocalizationInit: () => {
-                console.log(
-                  '[Kokarya] Localization started'
-                )
+          console.log(
+            '[Kokarya] MapSpace connected'
+          )
 
-                setStatus(
-                  'Scanning... Move the phone slowly and point at the mapped area.'
-                )
-              },
+          // ===================================================
+          // 17. CREATE NAVIGATION
+          // ===================================================
 
-              onLocalizationResult: (
-                result: any
-              ) => {
-                console.log(
-                  '[Kokarya] Localization result:',
-                  result
-                )
-              },
+          setStatus(
+            'Creating navigation...'
+          )
 
-              onLocalizationFailure: (
-                localizationError: any
-              ) => {
-                console.error(
-                  '[Kokarya] Localization failed:',
-                  localizationError
-                )
+          /*
+           * IMPORTANT:
+           *
+           * Replace this coordinate later
+           * with an actual Kokarya POI.
+           *
+           * This is only a test destination.
+           */
 
-                setStatus(
-                  'Localization failed'
-                )
-              },
+          const testDestination =
+            MapSpace.toLocal(
+              new THREE.Vector3(
+                4.0,
+                0,
+                1.2
+              )
+            )
 
-              onError: (
-                sessionError: any
-              ) => {
-                console.error(
-                  '[Kokarya] XR ERROR:',
-                  sessionError
-                )
+          navigation =
+            await Navigation.create({
+              adapter,
 
-                setError(
-                  sessionError?.message ||
-                  String(sessionError)
-                )
-              },
+              mapSpace,
+
+              pathfinder,
+
+              pois: [
+                {
+                  id:
+                    'test-destination',
+
+                  name:
+                    'Test Destination',
+
+                  position:
+                    testDestination,
+                },
+              ],
+            })
+
+          if (disposed) return
+
+          navigationRef.current =
+            navigation
+
+          console.log(
+            '[Kokarya] Navigation created'
+          )
+
+          // ===================================================
+          // 18. NAVIGATION STATE
+          // ===================================================
+
+          navigation.on(
+            'stateChanged',
+            ({
+              state,
+              previous,
+            }) => {
+              console.log(
+                '[Kokarya] Navigation state:',
+                previous,
+                '→',
+                state
+              )
+
+              setNavigationState(
+                state
+              )
             }
           )
 
-        /* =====================================================
-           12. THREE ADAPTER
-        ===================================================== */
+          // ===================================================
+          // 19. PATH UPDATED
+          // ===================================================
 
-        const adapter =
-          new ThreeAdapter({
-            session,
-
-            renderer,
-
-            scene,
-
-            camera,
-
-            /*
-             * Don't show MultiSet's own mesh.
-             *
-             * We want to see OUR Kokarya NavMesh.
-             */
-            showMesh: false,
-
-            showGizmo: false,
-
-            useDefaultButton: true,
-
-            /* ===============================================
-               LOCALIZATION SUCCESS
-            =============================================== */
-
-            onLocalizationSuccess: (
-              result: any,
-              worldFromMap: THREE.Matrix4
-            ) => {
+          navigation.on(
+            'pathUpdated',
+            ({
+              corners,
+              remainingDistance,
+            }) => {
               console.log(
-                '================================'
+                '[Kokarya] PATH UPDATED'
               )
 
               console.log(
-                '[Kokarya] LOCALIZATION SUCCESS'
+                '[Kokarya] Corners:',
+                corners
               )
 
               console.log(
-                '[Kokarya] Result:',
-                result
+                '[Kokarya] Remaining:',
+                remainingDistance
               )
+
+              setRemainingDistance(
+                remainingDistance
+              )
+
+              if (
+                corners.length <
+                2
+              ) {
+                pathMesh.visible =
+                  false
+
+                return
+              }
+
+              /*
+               * Remove old geometry.
+               */
+
+              pathMesh.geometry.dispose()
+
+              /*
+               * Build a new route ribbon.
+               */
+
+              pathMesh.geometry =
+                buildPathRibbon(
+                  corners,
+                  {
+                    width:
+                      0.35,
+
+                    heightAboveFloor:
+                      0.1,
+
+                    cornerRadius:
+                      0.4,
+
+                    cornerSegments:
+                      4,
+                  }
+                )
+
+              pathMesh.visible =
+                true
 
               console.log(
-                '[Kokarya] worldFromMap:',
-                worldFromMap
+                '[Kokarya] Route rendered'
               )
+            }
+          )
 
+          // ===================================================
+          // 20. ARRIVED
+          // ===================================================
+
+          navigation.on(
+            'arrived',
+            (poi) => {
               console.log(
-                '================================'
+                '[Kokarya] ARRIVED:',
+                poi.name
               )
-
-              setLocalized(true)
 
               setStatus(
-                'Localized successfully!'
+                `Arrived at ${poi.name}`
               )
-            },
 
-            /* ===============================================
-               XR FRAME
-            =============================================== */
+              setRemainingDistance(
+                0
+              )
 
-            onXRFrame: () => {
+              setNavigationState(
+                'arrived'
+              )
+
+              pathMesh.visible =
+                false
+            }
+          )
+
+          // ===================================================
+          // 21. UNREACHABLE
+          // ===================================================
+
+          navigation.on(
+            'unreachable',
+            (poi) => {
+              console.warn(
+                '[Kokarya] No route to:',
+                poi.name
+              )
+
+              setStatus(
+                `No route to ${poi.name}`
+              )
+
+              pathMesh.visible =
+                false
+            }
+          )
+
+          // ===================================================
+          // 22. TICK
+          // ===================================================
+
+          navigation.on(
+            'tick',
+            ({
+              deltaSeconds,
+            }) => {
               /*
-               * Navigation frame logic will be
-               * added here later.
+               * This is where the animated
+               * arrow system will run.
+               *
+               * For now we just keep the
+               * timer available.
                */
-            },
-          })
 
-        adapterRef.current =
-          adapter
+              animationTimeRef.current +=
+                deltaSeconds
+            }
+          )
 
-        /* =====================================================
-           13. CONNECT MAPSPACE TO ADAPTER
-        ===================================================== */
+          // ===================================================
+          // 23. INITIALIZE MULTISET
+          // ===================================================
 
-        mapSpace.connect(
-          adapter
-        )
+          setStatus(
+            'Ready — tap START AR'
+          )
 
-        console.log(
-          '[Kokarya] MapSpace connected to MultiSet'
-        )
+          await adapter.initialize()
 
-        /* =====================================================
-           14. INITIALIZE ADAPTER
-           
-           IMPORTANT:
-           Same pattern as your working
-           navigation page.
-        ===================================================== */
+          if (disposed) return
 
-        await adapter.initialize()
+          console.log(
+            '[Kokarya] Adapter initialized'
+          )
 
-        if (disposed) {
-          return
-        }
+          setStatus(
+            'Ready — tap START AR'
+          )
 
-        console.log(
-          '[Kokarya] MultiSet ThreeAdapter initialized'
-        )
+          // ===================================================
+          // 24. RESIZE
+          // ===================================================
 
-        setStatus(
-          'Ready — tap START AR.'
-        )
+          resizeHandler =
+            () => {
+              if (
+                !renderer ||
+                !camera
+              ) {
+                return
+              }
 
-        /* =====================================================
-           15. RESIZE
-        ===================================================== */
+              camera.aspect =
+                window.innerWidth /
+                window.innerHeight
 
-        const handleResize =
-          () => {
-            if (
-              !renderer ||
-              !camera
-            ) {
-              return
+              camera.updateProjectionMatrix()
+
+              renderer.setSize(
+                window.innerWidth,
+                window.innerHeight
+              )
             }
 
-            camera.aspect =
-              window.innerWidth /
-              window.innerHeight
-
-            camera.updateProjectionMatrix()
-
-            renderer.setSize(
-              window.innerWidth,
-              window.innerHeight
-            )
-          }
-
-        window.addEventListener(
-          'resize',
-          handleResize
-        )
-
-        /* =====================================================
-           CLEANUP RESIZE
-        ===================================================== */
-
-        return () => {
-          window.removeEventListener(
+          window.addEventListener(
             'resize',
-            handleResize
+            resizeHandler
+          )
+
+        } catch (err: any) {
+          console.error(
+            '[Kokarya] Initialization error:',
+            err
+          )
+
+          setError(
+            err?.message ||
+            String(err)
+          )
+
+          setStatus(
+            'Initialization failed'
           )
         }
-
-      } catch (err: any) {
-        console.error(
-          '[Kokarya] Initialization error:',
-          err
-        )
-
-        setError(
-          err?.message ||
-          String(err)
-        )
-
-        setStatus(
-          'Initialization failed'
-        )
       }
+
+      init()
+    } catch (error: any) {
+      console.error(
+        '[Kokarya] Fatal error:',
+        error
+      )
     }
 
-    let resizeCleanup:
-      (() => void) | undefined
-
-    init().then(
-      cleanup => {
-        resizeCleanup =
-          cleanup
-      }
-    )
-
-    /* =======================================================
-       GLOBAL CLEANUP
-    ======================================================= */
+    // =======================================================
+    // CLEANUP
+    // =======================================================
 
     return () => {
       disposed = true
 
-      resizeCleanup?.()
-
-      try {
-        adapterRef.current?.dispose()
-      } catch (error) {
-        console.error(
-          '[Kokarya] Adapter cleanup error:',
-          error
+      if (
+        resizeHandler
+      ) {
+        window.removeEventListener(
+          'resize',
+          resizeHandler
         )
       }
 
-      adapterRef.current =
+      // -----------------------------------------------
+      // Navigation
+      // -----------------------------------------------
+
+      try {
+        navigation?.stop()
+      } catch {}
+
+      navigationRef.current =
         null
+
+      // -----------------------------------------------
+      // Path
+      // -----------------------------------------------
+
+      if (
+        pathMeshRef.current
+      ) {
+        pathMeshRef.current.geometry.dispose()
+
+        const material =
+          pathMeshRef.current
+            .material
+
+        if (
+          material instanceof
+          THREE.Material
+        ) {
+          material.dispose()
+        }
+
+        pathMeshRef.current =
+          null
+      }
+
+      // -----------------------------------------------
+      // Pathfinder
+      // -----------------------------------------------
+
+      try {
+        pathfinderRef.current?.dispose()
+      } catch {}
+
+      pathfinderRef.current =
+        null
+
+      // -----------------------------------------------
+      // MapSpace
+      // -----------------------------------------------
+
+      try {
+        mapSpaceRef.current?.dispose()
+      } catch {}
 
       mapSpaceRef.current =
         null
 
-      navMeshRef.current =
+      // -----------------------------------------------
+      // Adapter
+      // -----------------------------------------------
+
+      try {
+        adapterRef.current?.dispose()
+      } catch {}
+
+      adapterRef.current =
         null
 
-      pathfinderRef.current =
-        null
+      // -----------------------------------------------
+      // Renderer
+      // -----------------------------------------------
 
       if (
         renderer &&
@@ -664,8 +1072,18 @@ export default function KokaryaFullMapPage() {
       }
 
       renderer?.dispose()
+
+      rendererRef.current =
+        null
+
+      navMeshRef.current =
+        null
     }
   }, [])
+
+  // =======================================================
+  // UI
+  // =======================================================
 
   return (
     <main
@@ -673,12 +1091,147 @@ export default function KokaryaFullMapPage() {
         position: 'fixed',
         inset: 0,
         overflow: 'hidden',
-        background: 'transparent',
+        background:
+          'transparent',
       }}
     >
 
       {/* ================================================
-          THREE.JS / WEBXR CANVAS
+          STATUS PANEL
+      ================================================= */}
+
+      <div
+        style={{
+          position: 'fixed',
+
+          top: 16,
+          left: 16,
+          right: 16,
+
+          zIndex: 50,
+
+          padding:
+            '16px 18px',
+
+          borderRadius: 20,
+
+          color: '#ffffff',
+
+          background:
+            'rgba(20, 20, 24, 0.84)',
+
+          backdropFilter:
+            'blur(16px)',
+
+          WebkitBackdropFilter:
+            'blur(16px)',
+
+          border:
+            '1px solid rgba(255,255,255,0.12)',
+
+          fontFamily:
+            'Arial, sans-serif',
+
+          pointerEvents:
+            'none',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 24,
+            fontWeight: 700,
+          }}
+        >
+          Kokarya Full Map
+        </div>
+
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 15,
+            opacity: 0.9,
+          }}
+        >
+          {status}
+        </div>
+
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 13,
+            opacity: 0.7,
+          }}
+        >
+          NavMesh groups:{' '}
+          {groupCount ??
+            'loading...'}
+        </div>
+
+        <div
+          style={{
+            marginTop: 5,
+            fontSize: 13,
+            color:
+              localized
+                ? '#7CFFA8'
+                : '#FFD866',
+          }}
+        >
+          ●{' '}
+          {localized
+            ? 'Localized'
+            : 'Not localized'}
+        </div>
+
+        <div
+          style={{
+            marginTop: 5,
+            fontSize: 13,
+            opacity: 0.75,
+          }}
+        >
+          Navigation:{' '}
+          {navigationState}
+        </div>
+
+        {remainingDistance !==
+          null && (
+          <div
+            style={{
+              marginTop: 5,
+              fontSize: 13,
+              opacity: 0.75,
+            }}
+          >
+            Distance:{' '}
+            {remainingDistance.toFixed(
+              1
+            )}{' '}
+            m
+          </div>
+        )}
+
+        {error && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: 8,
+              borderRadius: 8,
+              background:
+                'rgba(255,0,0,0.15)',
+              color: '#ff8b8b',
+              fontSize: 12,
+              wordBreak:
+                'break-word',
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* ================================================
+          THREE / WEBXR CONTAINER
       ================================================= */}
 
       <div
@@ -691,101 +1244,6 @@ export default function KokaryaFullMapPage() {
         }}
       />
 
-      {/* ================================================
-          STATUS
-      ================================================= */}
-
-      <div
-        style={{
-          position: 'fixed',
-          top: 16,
-          left: 16,
-          right: 16,
-          zIndex: 20,
-
-          color: '#ffffff',
-
-          background:
-            'rgba(15, 15, 20, 0.78)',
-
-          backdropFilter:
-            'blur(14px)',
-
-          WebkitBackdropFilter:
-            'blur(14px)',
-
-          padding:
-            '14px 16px',
-
-          borderRadius: 18,
-
-          fontFamily:
-            'Arial, sans-serif',
-
-          border:
-            '1px solid rgba(255,255,255,0.12)',
-
-          pointerEvents: 'none',
-        }}
-      >
-        <div
-          style={{
-            fontSize: 22,
-            fontWeight: 700,
-          }}
-        >
-          Kokarya Full Map
-        </div>
-
-        <div
-          style={{
-            marginTop: 4,
-            fontSize: 14,
-            opacity: 0.85,
-          }}
-        >
-          {status}
-        </div>
-
-        {groupCount !== null && (
-          <div
-            style={{
-              marginTop: 4,
-              fontSize: 13,
-              opacity: 0.7,
-            }}
-          >
-            NavMesh groups: {groupCount}
-          </div>
-        )}
-
-        <div
-          style={{
-            marginTop: 4,
-            fontSize: 13,
-            color: localized
-              ? '#86efac'
-              : '#facc15',
-          }}
-        >
-          {localized
-            ? '● Localized'
-            : '● Not localized'}
-        </div>
-
-        {error && (
-          <div
-            style={{
-              marginTop: 8,
-              color: '#ff7777',
-              fontSize: 12,
-              wordBreak: 'break-word',
-            }}
-          >
-            {error}
-          </div>
-        )}
-      </div>
     </main>
   )
 }
