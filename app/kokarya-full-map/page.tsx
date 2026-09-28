@@ -1,8 +1,13 @@
- 'use client'
+'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
+
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 import {
   MultisetClient,
@@ -15,36 +20,23 @@ import {
 } from '@multisetai/vps/three'
 
 import {
-  Navigation as MultiSetNavigation,
-  NavMeshPathfinder,
-} from '@multisetai/vps/navigation'
+  DestinationDrawer,
+  type DestinationItem,
+} from '@/components/navigation/destination-drawer'
 
 import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from '@/components/ui/drawer'
-
-import { Button } from '@/components/ui/button'
-
-import {
+  Check,
+  LocateFixed,
   MapPin,
   Navigation,
   RotateCcw,
-  ArrowLeft,
-  ArrowRight,
-  ChevronUp,
-  LocateFixed,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 
-// =============================================================
-// TYPES
-// =============================================================
+/* =========================================================
+   TYPES
+========================================================= */
 
 type Destination = {
   id: string
@@ -52,45 +44,31 @@ type Destination = {
   position: THREE.Vector3
 }
 
-type DirectionState =
+type NavigationState =
+  | 'idle'
+  | 'localizing'
+  | 'navigating'
+  | 'reached'
+
+type DirectionInstruction =
+  | 'none'
   | 'straight'
   | 'left'
   | 'right'
   | 'uturn'
-  | 'none'
 
-// =============================================================
-// DESTINATIONS
-// =============================================================
+/* =========================================================
+   DESTINATIONS
+========================================================= */
 
-const DESTINATIONS: Destination[] = [
-  {
-    id: 'entrance',
-    name: 'Entrance',
-    position: new THREE.Vector3(
-      -0.149,
-      -0.543,
-      1.201
-    ),
-  },
-
-  {
-    id: 'pantry',
-    name: 'Pantry',
-    position: new THREE.Vector3(
-      0.607,
-      -0.493,
-      6.68
-    ),
-  },
-
+const destinations: Destination[] = [
   {
     id: 'cabin-1',
     name: 'Cabin 1',
     position: new THREE.Vector3(
-      4.758,
-      -0.47,
-      1.897
+      4.433,
+      -2.196,
+      1.104
     ),
   },
 
@@ -98,55 +76,149 @@ const DESTINATIONS: Destination[] = [
     id: 'cabin-2',
     name: 'Cabin 2',
     position: new THREE.Vector3(
-      8.962,
-      -0.488,
-      1.736
+      9.726,
+      -2.138,
+      1.542
     ),
   },
 
   {
     id: 'meeting-room',
-    name: 'Meeting room',
+    name: 'Meeting Room',
     position: new THREE.Vector3(
-      11.588,
-      -0.468,
-      1.757
+      11.947,
+      -2.185,
+      1.352
+    ),
+  },
+
+  {
+    id: 'lobby',
+    name: 'Lobby',
+    position: new THREE.Vector3(
+      1.282,
+      -1.214,
+      -2.935
+    ),
+  },
+
+  {
+    id: 'pantry',
+    name: 'Pantry',
+    position: new THREE.Vector3(
+      0.955,
+      -1.226,
+      7.942
+    ),
+  },
+
+  {
+    id: 'restroom',
+    name: 'Restroom',
+    position: new THREE.Vector3(
+      -0.895,
+      -1.498,
+      6.978
+    ),
+  },
+
+  {
+    id: 'entrance-door',
+    name: 'Entrance Door',
+    position: new THREE.Vector3(
+      -0.058,
+      -2.210,
+      1.260
     ),
   },
 ]
 
-// =============================================================
-// CONSTANTS
-// =============================================================
+const destinationItems: DestinationItem[] =
+  destinations.map(item => ({
+    id: item.id,
+    name: item.name,
+  }))
 
-const ROUTE_HEIGHT = 0.045
+/* =========================================================
+   NAVIGATION CONFIG
+========================================================= */
 
-const ARROW_HEIGHT = 0.075
+/**
+ * Distance at which we consider the user arrived.
+ */
+const REACHED_DISTANCE = 0.75
 
-const DESTINATION_PIN_HEIGHT = 1.15
+/**
+ * Require multiple consecutive samples.
+ * Prevents false arrival.
+ */
+const REQUIRED_REACHED_SAMPLES = 3
 
-const DESTINATION_LABEL_HEIGHT = 1.72
+/**
+ * Don't rebuild arrows for tiny movements.
+ */
+const PATH_UPDATE_DISTANCE = 0.18
 
-const ARROW_SPACING = 0.72
+/**
+ * Floor arrow height.
+ */
+const ARROW_Y_OFFSET = 0.035
 
-const ARROW_SIZE = 0.28
+/**
+ * Space between navigation chevrons.
+ */
+const ARROW_SPACING = 0.55
 
-const DIRECTION_UPDATE_DISTANCE = 0.15
+/**
+ * Arrow width.
+ */
+const ARROW_WIDTH = 0.30
 
-// =============================================================
-// PAGE
-// =============================================================
+/**
+ * Destination marker height.
+ *
+ * Lower than previous version.
+ */
+const DESTINATION_PIN_HEIGHT = 0.68
 
-export default function KokaryaFullMapPage() {
-  // ===========================================================
-  // THREE
-  // ===========================================================
+/**
+ * Destination label height.
+ */
+const DESTINATION_LABEL_HEIGHT = 0.92
+
+/**
+ * Voice cooldown.
+ */
+const VOICE_COOLDOWN = 2500
+
+/* =========================================================
+   COMPONENT
+========================================================= */
+
+export default function NavigatePage() {
+  /* =======================================================
+     DOM
+  ======================================================= */
 
   const containerRef =
-    useRef<HTMLDivElement | null>(null)
+    useRef<HTMLDivElement>(null)
+
+  /* =======================================================
+     THREE
+  ======================================================= */
 
   const rendererRef =
     useRef<THREE.WebGLRenderer | null>(null)
+
+  const sceneRef =
+    useRef<THREE.Scene | null>(null)
+
+  const cameraRef =
+    useRef<THREE.PerspectiveCamera | null>(null)
+
+  /* =======================================================
+     MULTISET
+  ======================================================= */
 
   const adapterRef =
     useRef<ThreeAdapter | null>(null)
@@ -154,164 +226,611 @@ export default function KokaryaFullMapPage() {
   const mapSpaceRef =
     useRef<MapSpace | null>(null)
 
-  const pathfinderRef =
-    useRef<NavMeshPathfinder | null>(null)
-
-  const navigationRef =
-    useRef<MultiSetNavigation | null>(null)
-
-  const cameraRef =
-    useRef<THREE.PerspectiveCamera | null>(null)
-
-  // ===========================================================
-  // NAVIGATION VISUALS
-  // ===========================================================
+  /* =======================================================
+     NAVIGATION OBJECTS
+  ======================================================= */
 
   const navigationGroupRef =
     useRef<THREE.Group | null>(null)
 
-  const arrowMeshesRef =
-    useRef<THREE.Mesh[]>([])
-
-  const routePointsRef =
-    useRef<THREE.Vector3[]>([])
-
-  const routeDistancesRef =
-    useRef<number[]>([])
-
-  const totalRouteLengthRef =
-    useRef(0)
+  const arrowGroupRef =
+    useRef<THREE.Group | null>(null)
 
   const destinationMarkerRef =
     useRef<THREE.Group | null>(null)
 
-  const destinationRingRef =
-    useRef<THREE.Mesh | null>(null)
-
-  const destinationBeamRef =
-    useRef<THREE.Mesh | null>(null)
-
-  const destinationLabelRef =
+  const destinationBoardRef =
     useRef<THREE.Sprite | null>(null)
 
-  // ===========================================================
-  // NAVIGATION STATE REFS
-  // ===========================================================
-
-  const navigationActiveRef =
-    useRef(false)
-
-  const selectedDestinationRef =
-    useRef('')
-
-  const animationTimeRef =
-    useRef(0)
-
-  const arrowOffsetRef =
-    useRef(0)
+  /* =======================================================
+     NAVIGATION DATA
+  ======================================================= */
 
   const currentMapPositionRef =
-    useRef(new THREE.Vector3())
+    useRef<THREE.Vector3 | null>(null)
 
-  const lastMapPositionRef =
-    useRef(new THREE.Vector3())
+  const selectedDestinationRef =
+    useRef<Destination | null>(null)
 
-  const currentDirectionRef =
-    useRef<DirectionState>('none')
+  const lastPathPositionRef =
+    useRef<THREE.Vector3 | null>(null)
 
-  // ===========================================================
-  // REACT STATE
-  // ===========================================================
+  const reachedSamplesRef =
+    useRef(0)
+
+  /* =======================================================
+     VOICE
+  ======================================================= */
+
+  const voiceEnabledRef =
+    useRef(true)
+
+  const lastVoiceTimeRef =
+    useRef(0)
+
+  const lastInstructionRef =
+    useRef<DirectionInstruction>('none')
+
+  const lastDistanceMilestoneRef =
+    useRef<number | null>(null)
+
+  /* =======================================================
+     STATE
+  ======================================================= */
 
   const [status, setStatus] =
-    useState('Initializing...')
-
-  const [localized, setLocalized] =
-    useState(false)
-
-  const [distance, setDistance] =
-    useState<number | null>(null)
-
-  const [selectedDestination, setSelectedDestination] =
-    useState('')
-
-  const [pathVisible, setPathVisible] =
-    useState(false)
-
-  const [isNavigating, setIsNavigating] =
-    useState(false)
+    useState(
+      'Initializing...'
+    )
 
   const [error, setError] =
     useState('')
 
-  const [arrivedMessage, setArrivedMessage] =
-    useState('')
+  const [localized, setLocalized] =
+    useState(false)
 
-  const [direction, setDirection] =
-    useState<DirectionState>('none')
-
-  // ===========================================================
-  // DESTINATION OBJECT
-  // ===========================================================
-
-  const selectedDestinationObject =
-    DESTINATIONS.find(
-      (destination) =>
-        destination.id ===
-        selectedDestination
+  const [
+    selectedDestination,
+    setSelectedDestination,
+  ] =
+    useState<Destination | null>(
+      null
     )
 
-  // ===========================================================
-  // CREATE ARROW
-  // ===========================================================
+  const [distance, setDistance] =
+    useState<number | null>(
+      null
+    )
 
-  const createArrowGeometry = () => {
+  const [
+    navigationState,
+    setNavigationState,
+  ] =
+    useState<NavigationState>(
+      'idle'
+    )
+
+  const [
+    voiceEnabled,
+    setVoiceEnabled,
+  ] =
+    useState(true)
+
+  const [
+    currentInstruction,
+    setCurrentInstruction,
+  ] =
+    useState<DirectionInstruction>(
+      'none'
+    )
+
+  /* =======================================================
+     DISTANCE
+  ======================================================= */
+
+  const calculateDistance =
+    useCallback(
+      (
+        from: THREE.Vector3,
+        to: THREE.Vector3
+      ) => {
+        const dx =
+          to.x - from.x
+
+        const dz =
+          to.z - from.z
+
+        return Math.sqrt(
+          dx * dx +
+            dz * dz
+        )
+      },
+      []
+    )
+
+  /* =======================================================
+     SPEECH
+  ======================================================= */
+
+  const speak = useCallback(
+    (
+      text: string,
+      force = false
+    ) => {
+      if (
+        !voiceEnabledRef.current
+      ) {
+        return
+      }
+
+      if (
+        typeof window ===
+        'undefined'
+      ) {
+        return
+      }
+
+      if (
+        !(
+          'speechSynthesis' in
+          window
+        )
+      ) {
+        return
+      }
+
+      const now =
+        Date.now()
+
+      if (
+        !force &&
+        now -
+          lastVoiceTimeRef.current <
+          VOICE_COOLDOWN
+      ) {
+        return
+      }
+
+      lastVoiceTimeRef.current =
+        now
+
+      window.speechSynthesis.cancel()
+
+      const utterance =
+        new SpeechSynthesisUtterance(
+          text
+        )
+
+      utterance.lang =
+        'en-IN'
+
+      utterance.rate =
+        0.92
+
+      utterance.pitch =
+        1
+
+      utterance.volume =
+        1
+
+      window.speechSynthesis.speak(
+        utterance
+      )
+    },
+    []
+  )
+
+  /* =======================================================
+     RESET VOICE
+  ======================================================= */
+
+  const resetVoiceState =
+    useCallback(() => {
+      lastInstructionRef.current =
+        'none'
+
+      lastDistanceMilestoneRef.current =
+        null
+
+      lastVoiceTimeRef.current =
+        0
+
+      setCurrentInstruction(
+        'none'
+      )
+    }, [])
+
+  /* =======================================================
+     VOICE TOGGLE
+  ======================================================= */
+
+  const toggleVoice =
+    useCallback(() => {
+      const next =
+        !voiceEnabledRef.current
+
+      voiceEnabledRef.current =
+        next
+
+      setVoiceEnabled(
+        next
+      )
+
+      if (!next) {
+        if (
+          typeof window !==
+            'undefined' &&
+          'speechSynthesis' in
+            window
+        ) {
+          window.speechSynthesis.cancel()
+        }
+
+        return
+      }
+
+      speak(
+        'Voice guidance enabled.',
+        true
+      )
+    }, [speak])
+
+  /* =======================================================
+     GET DIRECTION
+     
+     Uses the phone camera's horizontal
+     forward direction against the destination.
+  ======================================================= */
+
+  const getDirectionInstruction =
+    useCallback(
+      (
+        camera: THREE.PerspectiveCamera,
+        current: THREE.Vector3,
+        destination: THREE.Vector3
+      ): DirectionInstruction => {
+        const destinationDirection =
+          new THREE.Vector3(
+            destination.x -
+              current.x,
+            0,
+            destination.z -
+              current.z
+          )
+
+        if (
+          destinationDirection.lengthSq() <
+          0.001
+        ) {
+          return 'none'
+        }
+
+        destinationDirection.normalize()
+
+        const cameraForward =
+          new THREE.Vector3()
+
+        camera.getWorldDirection(
+          cameraForward
+        )
+
+        cameraForward.y = 0
+
+        if (
+          cameraForward.lengthSq() <
+          0.001
+        ) {
+          return 'none'
+        }
+
+        cameraForward.normalize()
+
+        const dot =
+          cameraForward.dot(
+            destinationDirection
+          )
+
+        const cross =
+          cameraForward.x *
+            destinationDirection.z -
+          cameraForward.z *
+            destinationDirection.x
+
+        /*
+         * User is facing almost directly
+         * toward destination.
+         */
+        if (dot > 0.72) {
+          return 'straight'
+        }
+
+        /*
+         * Destination is almost directly
+         * behind the user.
+         */
+        if (dot < -0.55) {
+          return 'uturn'
+        }
+
+        /*
+         * Cross product determines side.
+         */
+        if (cross > 0) {
+          return 'left'
+        }
+
+        return 'right'
+      },
+      []
+    )
+
+  /* =======================================================
+     DIRECTION LABEL
+  ======================================================= */
+
+  const getInstructionLabel =
+    useCallback(
+      (
+        instruction: DirectionInstruction
+      ) => {
+        switch (
+          instruction
+        ) {
+          case 'straight':
+            return 'Go straight'
+
+          case 'left':
+            return 'Turn left'
+
+          case 'right':
+            return 'Turn right'
+
+          case 'uturn':
+            return 'Turn around'
+
+          default:
+            return 'Follow the arrows'
+        }
+      },
+      []
+    )
+
+  /* =======================================================
+     SPEAK DIRECTION
+  ======================================================= */
+
+  const announceDirection =
+    useCallback(
+      (
+        instruction: DirectionInstruction,
+        destinationName: string
+      ) => {
+        if (
+          instruction ===
+          'none'
+        ) {
+          return
+        }
+
+        if (
+          instruction ===
+          lastInstructionRef.current
+        ) {
+          return
+        }
+
+        lastInstructionRef.current =
+          instruction
+
+        setCurrentInstruction(
+          instruction
+        )
+
+        switch (
+          instruction
+        ) {
+          case 'straight':
+            speak(
+              `Go straight towards ${destinationName}.`
+            )
+            break
+
+          case 'left':
+            speak(
+              `Turn left towards ${destinationName}.`
+            )
+            break
+
+          case 'right':
+            speak(
+              `Turn right towards ${destinationName}.`
+            )
+            break
+
+          case 'uturn':
+            speak(
+              `Turn around. ${destinationName} is behind you.`
+            )
+            break
+        }
+      },
+      [speak]
+    )
+
+  /* =======================================================
+     DISTANCE VOICE
+  ======================================================= */
+
+  const announceDistance =
+    useCallback(
+      (
+        remainingDistance: number,
+        destinationName: string
+      ) => {
+        if (
+          !voiceEnabledRef.current
+        ) {
+          return
+        }
+
+        const milestones =
+          [20, 10, 5]
+
+        for (
+          const milestone of
+            milestones
+        ) {
+          if (
+            remainingDistance <=
+              milestone &&
+            (
+              lastDistanceMilestoneRef.current ===
+                null ||
+              lastDistanceMilestoneRef.current >
+                milestone
+            )
+          ) {
+            lastDistanceMilestoneRef.current =
+              milestone
+
+            speak(
+              `${milestone} meters to ${destinationName}.`
+            )
+
+            return
+          }
+        }
+      },
+      [speak]
+    )
+
+  /* =======================================================
+     CLEAR NAVIGATION
+  ======================================================= */
+
+  const clearNavigationObjects =
+    useCallback(() => {
+      const navigationGroup =
+        navigationGroupRef.current
+
+      if (!navigationGroup) {
+        return
+      }
+
+      while (
+        navigationGroup
+          .children.length >
+        0
+      ) {
+        const object =
+          navigationGroup
+            .children[0]
+
+        navigationGroup.remove(
+          object
+        )
+
+        object.traverse(
+          child => {
+            const mesh =
+              child as THREE.Mesh
+
+            if (
+              mesh.geometry
+            ) {
+              mesh.geometry.dispose()
+            }
+
+            const material =
+              mesh.material
+
+            if (
+              Array.isArray(
+                material
+              )
+            ) {
+              material.forEach(
+                item =>
+                  item.dispose()
+              )
+            } else if (
+              material
+            ) {
+              material.dispose()
+            }
+          }
+        )
+      }
+
+      arrowGroupRef.current =
+        null
+
+      destinationMarkerRef.current =
+        null
+
+      destinationBoardRef.current =
+        null
+    }, [])
+
+  /* =======================================================
+     CREATE FLOOR ARROW
+  ======================================================= */
+
+  const createChevron = (
+    direction: THREE.Vector3,
+    index: number
+  ) => {
     const shape =
       new THREE.Shape()
 
     const width =
-      ARROW_SIZE
+      ARROW_WIDTH
 
-    const height =
-      ARROW_SIZE * 1.45
+    const length =
+      0.42
 
     /*
-     * Shape points upward:
+     * IMPORTANT:
+     *
+     * Tip is +Y.
+     *
+     * Therefore it looks:
      *
      *        /\
      *       /  \
-     *      /    \
-     *       |  |
+     *      /____\
+     *
+     * instead of \/.
      */
 
     shape.moveTo(
-      -width,
-      -height * 0.42
+      -width * 0.5,
+      -length * 0.35
     )
 
     shape.lineTo(
       0,
-      height * 0.5
+      length * 0.5
     )
 
     shape.lineTo(
-      width,
-      -height * 0.42
+      width * 0.5,
+      -length * 0.35
     )
 
     shape.lineTo(
-      width * 0.42,
-      -height * 0.42
+      width * 0.22,
+      -length * 0.35
     )
 
     shape.lineTo(
       0,
-      height * 0.12
+      0.12
     )
 
     shape.lineTo(
-      -width * 0.42,
-      -height * 0.42
+      -width * 0.22,
+      -length * 0.35
     )
 
     shape.closePath()
@@ -321,133 +840,514 @@ export default function KokaryaFullMapPage() {
         shape
       )
 
-    /*
-     * Put geometry flat on floor.
-     */
-    geometry.rotateX(
-      -Math.PI / 2
-    )
+    const material =
+      new THREE.MeshBasicMaterial({
+        color: 0x8b5cf6,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
 
-    return geometry
+    const mesh =
+      new THREE.Mesh(
+        geometry,
+        material
+      )
+
+    mesh.rotation.x =
+      -Math.PI / 2
+
+    const angle =
+      Math.atan2(
+        direction.x,
+        direction.z
+      )
+
+    mesh.rotation.y =
+      angle
+
+    mesh.position.y =
+      ARROW_Y_OFFSET
+
+    mesh.userData.index =
+      index
+
+    return mesh
   }
 
-  // ===========================================================
-  // CREATE DESTINATION LABEL
-  // ===========================================================
+  /* =======================================================
+     CREATE ARROW PATH
+  ======================================================= */
 
-  const createDestinationLabel = (
-    text: string
+  const createArrowPath = (
+    current: THREE.Vector3,
+    destination: THREE.Vector3
+  ) => {
+    const group =
+      new THREE.Group()
+
+    const start =
+      new THREE.Vector3(
+        current.x,
+        current.y,
+        current.z
+      )
+
+    const end =
+      new THREE.Vector3(
+        destination.x,
+        current.y,
+        destination.z
+      )
+
+    const direction =
+      new THREE.Vector3()
+        .subVectors(
+          end,
+          start
+        )
+
+    const totalDistance =
+      direction.length()
+
+    if (
+      totalDistance <
+      0.1
+    ) {
+      return group
+    }
+
+    direction.normalize()
+
+    const count =
+      Math.max(
+        1,
+        Math.floor(
+          totalDistance /
+            ARROW_SPACING
+        )
+      )
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+      const distanceAlong =
+        i *
+        ARROW_SPACING
+
+      const position =
+        start
+          .clone()
+          .add(
+            direction
+              .clone()
+              .multiplyScalar(
+                distanceAlong
+              )
+          )
+
+      const arrow =
+        createChevron(
+          direction,
+          i
+        )
+
+      arrow.position.x =
+        position.x
+
+      arrow.position.z =
+        position.z
+
+      const scale =
+        i % 2 === 0
+          ? 1
+          : 0.88
+
+      arrow.scale.set(
+        scale,
+        scale,
+        scale
+      )
+
+      group.add(
+        arrow
+      )
+    }
+
+    return group
+  }
+
+  /* =======================================================
+     UPDATE ARROW PATH
+  ======================================================= */
+
+  const updateArrowPath =
+    useCallback(
+      (
+        force = false
+      ) => {
+        const navigationGroup =
+          navigationGroupRef.current
+
+        const current =
+          currentMapPositionRef.current
+
+        const destination =
+          selectedDestinationRef.current
+
+        if (
+          !navigationGroup ||
+          !current ||
+          !destination
+        ) {
+          return
+        }
+
+        if (
+          !force &&
+          lastPathPositionRef.current
+        ) {
+          const movement =
+            current.distanceTo(
+              lastPathPositionRef.current
+            )
+
+          if (
+            movement <
+            PATH_UPDATE_DISTANCE
+          ) {
+            return
+          }
+        }
+
+        if (
+          arrowGroupRef.current
+        ) {
+          navigationGroup.remove(
+            arrowGroupRef.current
+          )
+
+          arrowGroupRef.current =
+            null
+        }
+
+        const arrows =
+          createArrowPath(
+            current,
+            destination.position
+          )
+
+        navigationGroup.add(
+          arrows
+        )
+
+        arrowGroupRef.current =
+          arrows
+
+        lastPathPositionRef.current =
+          current.clone()
+      },
+      []
+    )
+
+  /* =======================================================
+     CREATE DESTINATION MARKER
+  ======================================================= */
+
+  const createDestinationMarker = (
+    name: string
+  ) => {
+    const group =
+      new THREE.Group()
+
+    /* -----------------------------------------------------
+       FLOOR PULSE
+    ----------------------------------------------------- */
+
+    const outerRing =
+      new THREE.Mesh(
+        new THREE.RingGeometry(
+          0.28,
+          0.36,
+          48
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0x8b5cf6,
+          transparent: true,
+          opacity: 0.85,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      )
+
+    outerRing.rotation.x =
+      -Math.PI / 2
+
+    outerRing.position.y =
+      0.025
+
+    group.add(
+      outerRing
+    )
+
+    /* -----------------------------------------------------
+       INNER RING
+    ----------------------------------------------------- */
+
+    const innerRing =
+      new THREE.Mesh(
+        new THREE.RingGeometry(
+          0.10,
+          0.16,
+          32
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.95,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      )
+
+    innerRing.rotation.x =
+      -Math.PI / 2
+
+    innerRing.position.y =
+      0.03
+
+    group.add(
+      innerRing
+    )
+
+    /* -----------------------------------------------------
+       MAP PIN BODY
+    ----------------------------------------------------- */
+
+    const pinGroup =
+      new THREE.Group()
+
+    /*
+     * Sphere head.
+     */
+    const pinHead =
+      new THREE.Mesh(
+        new THREE.SphereGeometry(
+          0.115,
+          24,
+          24
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0x8b5cf6,
+          transparent: true,
+          opacity: 0.98,
+        })
+      )
+
+    pinHead.position.y =
+      DESTINATION_PIN_HEIGHT
+
+    pinGroup.add(
+      pinHead
+    )
+
+    /*
+     * Pin stem.
+     */
+    const pinStem =
+      new THREE.Mesh(
+        new THREE.CylinderGeometry(
+          0.055,
+          0.075,
+          0.32,
+          20
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0x8b5cf6,
+          transparent: true,
+          opacity: 0.98,
+        })
+      )
+
+    pinStem.position.y =
+      DESTINATION_PIN_HEIGHT -
+      0.18
+
+    pinGroup.add(
+      pinStem
+    )
+
+    /*
+     * Small white center.
+     */
+    const pinCenter =
+      new THREE.Mesh(
+        new THREE.SphereGeometry(
+          0.045,
+          20,
+          20
+        ),
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+        })
+      )
+
+    pinCenter.position.y =
+      DESTINATION_PIN_HEIGHT
+
+    pinGroup.add(
+      pinCenter
+    )
+
+    group.add(
+      pinGroup
+    )
+
+    group.userData.destinationName =
+      name
+
+    return group
+  }
+
+  /* =======================================================
+     DESTINATION LABEL
+  ======================================================= */
+
+  const createDestinationBoard = (
+    name: string
   ) => {
     const canvas =
       document.createElement(
         'canvas'
       )
 
-    canvas.width = 640
-    canvas.height = 180
+    canvas.width =
+      700
 
-    const context =
-      canvas.getContext('2d')
+    canvas.height =
+      180
 
-    if (!context) {
+    const ctx =
+      canvas.getContext(
+        '2d'
+      )
+
+    if (!ctx) {
       return null
     }
 
-    context.clearRect(
+    ctx.clearRect(
       0,
       0,
       canvas.width,
       canvas.height
     )
 
-    // ---------------------------------------------------------
-    // SHADOW
-    // ---------------------------------------------------------
+    /*
+     * Background.
+     */
+    ctx.fillStyle =
+      'rgba(15,10,25,0.92)'
 
-    context.shadowColor =
-      'rgba(0,0,0,0.45)'
+    ctx.beginPath()
 
-    context.shadowBlur = 24
-
-    // ---------------------------------------------------------
-    // BACKGROUND
-    // ---------------------------------------------------------
-
-    context.beginPath()
-
-    context.roundRect(
-      14,
-      14,
-      612,
-      152,
-      42
+    ctx.roundRect(
+      8,
+      8,
+      684,
+      164,
+      30
     )
 
-    context.fillStyle =
-      'rgba(10,10,14,0.90)'
+    ctx.fill()
 
-    context.fill()
+    /*
+     * Purple accent.
+     */
+    ctx.fillStyle =
+      '#8b5cf6'
 
-    context.shadowBlur = 0
+    ctx.fillRect(
+      8,
+      8,
+      14,
+      164
+    )
 
-    // ---------------------------------------------------------
-    // PIN DOT
-    // ---------------------------------------------------------
+    /*
+     * Pin icon.
+     */
+    ctx.fillStyle =
+      '#8b5cf6'
 
-    context.beginPath()
+    ctx.beginPath()
 
-    context.arc(
-      74,
-      90,
-      17,
+    ctx.arc(
+      75,
+      78,
+      25,
       0,
       Math.PI * 2
     )
 
-    context.fillStyle =
-      '#ff3158'
+    ctx.fill()
 
-    context.fill()
-
-    // ---------------------------------------------------------
-    // TEXT
-    // ---------------------------------------------------------
-
-    context.font =
-      '600 46px Arial'
-
-    context.fillStyle =
+    /*
+     * White pin center.
+     */
+    ctx.fillStyle =
       '#ffffff'
 
-    context.textAlign =
-      'left'
+    ctx.beginPath()
 
-    context.textBaseline =
-      'middle'
-
-    context.fillText(
-      text,
-      112,
-      90
+    ctx.arc(
+      75,
+      78,
+      9,
+      0,
+      Math.PI * 2
     )
 
-    // ---------------------------------------------------------
-    // TEXTURE
-    // ---------------------------------------------------------
+    ctx.fill()
+
+    /*
+     * Destination name.
+     */
+    ctx.fillStyle =
+      '#ffffff'
+
+    ctx.font =
+      'bold 44px Arial'
+
+    ctx.textAlign =
+      'left'
+
+    ctx.textBaseline =
+      'middle'
+
+    ctx.fillText(
+      name,
+      125,
+      90
+    )
 
     const texture =
       new THREE.CanvasTexture(
         canvas
       )
 
-    texture.needsUpdate = true
+    texture.needsUpdate =
+      true
 
     const material =
       new THREE.SpriteMaterial({
         map: texture,
         transparent: true,
-        depthWrite: false,
         depthTest: false,
+        depthWrite: false,
       })
 
     const sprite =
@@ -455,1426 +1355,311 @@ export default function KokaryaFullMapPage() {
         material
       )
 
+    /*
+     * Smaller label.
+     */
     sprite.scale.set(
-      2.05,
-      0.58,
+      2.0,
+      0.52,
       1
     )
+
+    sprite.userData.destinationName =
+      name
 
     return sprite
   }
 
-  // ===========================================================
-  // CREATE DESTINATION MARKER
-  // ===========================================================
-
-  const createDestinationMarker = (
-    destination: Destination
-  ) => {
-    const group =
-      new THREE.Group()
-
-    group.name =
-      'destination-marker'
-
-    // =========================================================
-    // FLOOR RING
-    // =========================================================
-
-    const ring =
-      new THREE.Mesh(
-        new THREE.RingGeometry(
-          0.28,
-          0.38,
-          48
-        ),
-        new THREE.MeshBasicMaterial({
-          color: 0xff3158,
-          transparent: true,
-          opacity: 0.65,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          depthTest: false,
-        })
-      )
-
-    ring.rotation.x =
-      -Math.PI / 2
-
-    ring.position.y =
-      0.025
-
-    ring.name =
-      'destination-ring'
-
-    destinationRingRef.current =
-      ring
-
-    group.add(
-      ring
-    )
-
-    // =========================================================
-    // SECOND PULSE RING
-    // =========================================================
-
-    const pulseRing =
-      new THREE.Mesh(
-        new THREE.RingGeometry(
-          0.42,
-          0.46,
-          48
-        ),
-        new THREE.MeshBasicMaterial({
-          color: 0xff3158,
-          transparent: true,
-          opacity: 0.3,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          depthTest: false,
-        })
-      )
-
-    pulseRing.rotation.x =
-      -Math.PI / 2
-
-    pulseRing.position.y =
-      0.027
-
-    pulseRing.name =
-      'destination-pulse-ring'
-
-    group.add(
-      pulseRing
-    )
-
-    // =========================================================
-    // PIN STEM
-    // =========================================================
-
-    const stem =
-      new THREE.Mesh(
-        new THREE.CylinderGeometry(
-          0.045,
-          0.065,
-          0.78,
-          16
-        ),
-        new THREE.MeshBasicMaterial({
-          color: 0xff3158,
-          transparent: true,
-          opacity: 0.95,
-          depthWrite: false,
-          depthTest: false,
-        })
-      )
-
-    stem.position.y =
-      0.58
-
-    group.add(
-      stem
-    )
-
-    // =========================================================
-    // PIN HEAD
-    // =========================================================
-
-    const head =
-      new THREE.Mesh(
-        new THREE.SphereGeometry(
-          0.20,
-          32,
-          32
-        ),
-        new THREE.MeshBasicMaterial({
-          color: 0xff3158,
-          transparent: true,
-          opacity: 0.98,
-          depthWrite: false,
-          depthTest: false,
-        })
-      )
-
-    head.position.y =
-      DESTINATION_PIN_HEIGHT
-
-    group.add(
-      head
-    )
-
-    // =========================================================
-    // INNER HEAD
-    // =========================================================
-
-    const inner =
-      new THREE.Mesh(
-        new THREE.SphereGeometry(
-          0.075,
-          20,
-          20
-        ),
-        new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.95,
-          depthWrite: false,
-          depthTest: false,
-        })
-      )
-
-    inner.position.y =
-      DESTINATION_PIN_HEIGHT
-
-    group.add(
-      inner
-    )
-
-    // =========================================================
-    // VERTICAL BEAM
-    // =========================================================
-
-    const beam =
-      new THREE.Mesh(
-        new THREE.CylinderGeometry(
-          0.025,
-          0.025,
-          1.5,
-          12
-        ),
-        new THREE.MeshBasicMaterial({
-          color: 0xff3158,
-          transparent: true,
-          opacity: 0.14,
-          depthWrite: false,
-          depthTest: false,
-        })
-      )
-
-    beam.position.y =
-      0.78
-
-    destinationBeamRef.current =
-      beam
-
-    group.add(
-      beam
-    )
-
-    // =========================================================
-    // LABEL
-    // =========================================================
-
-    const label =
-      createDestinationLabel(
-        destination.name
-      )
-
-    if (label) {
-      label.position.y =
-        DESTINATION_LABEL_HEIGHT
-
-      destinationLabelRef.current =
-        label
-
-      group.add(
-        label
-      )
-    }
-
-    // =========================================================
-    // POSITION
-    // =========================================================
-
-    group.position.copy(
-      destination.position
-    )
-
-    return group
-  }
-
-  // ===========================================================
-  // DISTANCE BETWEEN PATH POINTS
-  // ===========================================================
-
-  const calculateRouteDistances = (
-    points: readonly THREE.Vector3[]
-  ) => {
-    const distances: number[] = [
-      0,
-    ]
-
-    let total = 0
-
-    for (
-      let i = 1;
-      i < points.length;
-      i++
-    ) {
-      total +=
-        points[i - 1].distanceTo(
-          points[i]
-        )
-
-      distances.push(
-        total
-      )
-    }
-
-    return {
-      distances,
-      total,
-    }
-  }
-
-  // ===========================================================
-  // POINT ALONG EXACT POLYLINE
-  // ===========================================================
-
-  const getPointOnRoute = (
-    distanceAlongRoute: number
-  ) => {
-    const points =
-      routePointsRef.current
-
-    const distances =
-      routeDistancesRef.current
-
-    if (
-      points.length === 0
-    ) {
-      return null
-    }
-
-    if (
-      points.length === 1
-    ) {
-      return {
-        point:
-          points[0].clone(),
-
-        tangent:
-          new THREE.Vector3(
-            0,
-            0,
-            -1
-          ),
-      }
-    }
-
-    const clampedDistance =
-      THREE.MathUtils.clamp(
-        distanceAlongRoute,
-        0,
-        totalRouteLengthRef.current
-      )
-
-    let segmentIndex = 0
-
-    for (
-      let i = 1;
-      i < distances.length;
-      i++
-    ) {
-      if (
-        clampedDistance <=
-        distances[i]
-      ) {
-        segmentIndex =
-          i - 1
-
-        break
-      }
-
-      segmentIndex =
-        i - 1
-    }
-
-    const start =
-      points[segmentIndex]
-
-    const end =
-      points[
-        Math.min(
-          segmentIndex + 1,
-          points.length - 1
-        )
-      ]
-
-    const startDistance =
-      distances[segmentIndex]
-
-    const endDistance =
-      distances[
-        Math.min(
-          segmentIndex + 1,
-          distances.length - 1
-        )
-      ]
-
-    const segmentLength =
-      Math.max(
-        endDistance -
-          startDistance,
-        0.0001
-      )
-
-    const t =
-      THREE.MathUtils.clamp(
-        (
-          clampedDistance -
-            startDistance
-        ) /
-          segmentLength,
-        0,
-        1
-      )
-
-    const point =
-      new THREE.Vector3().lerpVectors(
-        start,
-        end,
-        t
-      )
-
-    const tangent =
-      new THREE.Vector3()
-        .subVectors(
-          end,
-          start
-        )
-        .normalize()
-
-    return {
-      point,
-      tangent,
-    }
-  }
-
-  // ===========================================================
-  // CLEAR ROUTE
-  // ===========================================================
-
-  const clearNavigationVisual = () => {
-    const mapSpace =
-      mapSpaceRef.current
-
-    const group =
-      navigationGroupRef.current
-
-    if (
-      mapSpace &&
-      group
-    ) {
-      mapSpace.object.remove(
-        group
-      )
-
-      group.traverse(
-        (object) => {
-          const mesh =
-            object as THREE.Mesh
-
-          if (
-            mesh.geometry
-          ) {
-            mesh.geometry.dispose()
-          }
-
-          if (
-            mesh.material instanceof
-            THREE.Material
-          ) {
-            mesh.material.dispose()
-          }
-        }
-      )
-    }
-
-    navigationGroupRef.current =
-      null
-
-    arrowMeshesRef.current =
-      []
-
-    routePointsRef.current =
-      []
-
-    routeDistancesRef.current =
-      []
-
-    totalRouteLengthRef.current =
-      0
-
-    destinationMarkerRef.current =
-      null
-
-    destinationRingRef.current =
-      null
-
-    destinationBeamRef.current =
-      null
-
-    destinationLabelRef.current =
-      null
-  }
-
-  // ===========================================================
-  // CREATE EXACT ROUTE VISUAL
-  // ===========================================================
-
-  const createRouteVisual = (
-    corners: readonly THREE.Vector3[]
-  ) => {
-    const mapSpace =
-      mapSpaceRef.current
-
-    if (!mapSpace) {
-      return
-    }
-
-    if (
-      corners.length < 2
-    ) {
-      return
-    }
-
-    // ---------------------------------------------------------
-    // CLEAR OLD
-    // ---------------------------------------------------------
-
-    clearNavigationVisual()
-
-    // ---------------------------------------------------------
-    // CLONE EXACT CORNERS
-    //
-    // IMPORTANT:
-    // We intentionally DO NOT smooth these.
-    // ---------------------------------------------------------
-
-    const points =
-      corners.map(
-        (point) =>
-          point.clone()
-      )
-
-    routePointsRef.current =
-      points
-
-    const {
-      distances,
-      total,
-    } =
-      calculateRouteDistances(
-        points
-      )
-
-    routeDistancesRef.current =
-      distances
-
-    totalRouteLengthRef.current =
-      total
-
-    // ---------------------------------------------------------
-    // GROUP
-    // ---------------------------------------------------------
-
-    const group =
-      new THREE.Group()
-
-    group.name =
-      'ar-navigation'
-
-    navigationGroupRef.current =
-      group
-
-    mapSpace.object.add(
-      group
-    )
-
-    // =========================================================
-    // EXACT ROUTE LINE
-    // =========================================================
-
-    const lineGeometry =
-      new THREE.BufferGeometry().setFromPoints(
-        points.map(
-          (point) =>
-            new THREE.Vector3(
-              point.x,
-              point.y +
-                ROUTE_HEIGHT,
-              point.z
-            )
-        )
-      )
-
-    const lineMaterial =
-      new THREE.LineBasicMaterial({
-        color: 0x00d9ff,
-        transparent: true,
-        opacity: 0.52,
-        depthWrite: false,
-        depthTest: false,
-        linewidth: 3,
-      })
-
-    const line =
-      new THREE.Line(
-        lineGeometry,
-        lineMaterial
-      )
-
-    line.frustumCulled =
-      false
-
-    group.add(
-      line
-    )
-
-    // =========================================================
-    // ROUTE SEGMENT GLOW
-    // =========================================================
-
-    for (
-      let i = 0;
-      i < points.length - 1;
-      i++
-    ) {
-      const start =
-        points[i].clone()
-
-      const end =
-        points[i + 1].clone()
-
-      start.y +=
-        ROUTE_HEIGHT
-
-      end.y +=
-        ROUTE_HEIGHT
-
-      const geometry =
-        new THREE.CylinderGeometry(
-          0.012,
-          0.012,
-          start.distanceTo(
-            end
-          ),
-          8
-        )
-
-      const material =
-        new THREE.MeshBasicMaterial({
-          color: 0x00d9ff,
-          transparent: true,
-          opacity: 0.25,
-          depthWrite: false,
-          depthTest: false,
-        })
-
-      const segment =
-        new THREE.Mesh(
-          geometry,
-          material
-        )
-
-      const midpoint =
-        new THREE.Vector3()
-          .addVectors(
-            start,
-            end
-          )
-          .multiplyScalar(
-            0.5
-          )
-
-      segment.position.copy(
-        midpoint
-      )
-
-      segment.quaternion.setFromUnitVectors(
-        new THREE.Vector3(
-          0,
-          1,
-          0
-        ),
-        new THREE.Vector3()
-          .subVectors(
-            end,
-            start
-          )
-          .normalize()
-      )
-
-      segment.frustumCulled =
-        false
-
-      group.add(
-        segment
-      )
-    }
-
-    // =========================================================
-    // ARROWS
-    // =========================================================
-
-    const arrowCount =
-      Math.max(
-        4,
-        Math.floor(
-          total /
-            ARROW_SPACING
-        )
-      )
-
-    for (
-      let i = 0;
-      i < arrowCount;
-      i++
-    ) {
-      const geometry =
-        createArrowGeometry()
-
-      const material =
-        new THREE.MeshBasicMaterial({
-          color: 0x00d9ff,
-          transparent: true,
-          opacity: 0.95,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          depthTest: false,
-        })
-
-      const arrow =
-        new THREE.Mesh(
-          geometry,
-          material
-        )
-
-      arrow.frustumCulled =
-        false
-
-      arrow.userData.index =
-        i
-
-      group.add(
-        arrow
-      )
-
-      arrowMeshesRef.current.push(
-        arrow
-      )
-    }
-
-    // =========================================================
-    // DESTINATION MARKER
-    // =========================================================
-
-    const destination =
-      DESTINATIONS.find(
-        (item) =>
-          item.id ===
-          selectedDestinationRef.current
-      )
-
-    if (destination) {
-      const marker =
-        createDestinationMarker(
-          destination
-        )
-
-      destinationMarkerRef.current =
-        marker
-
-      group.add(
-        marker
-      )
-    }
-  }
-
-  // ===========================================================
-  // CALCULATE DIRECTION FROM CAMERA
-  // ===========================================================
-
-  const calculateCameraDirection = () => {
-    const camera =
-      cameraRef.current
-
-    const mapSpace =
-      mapSpaceRef.current
-
-    const points =
-      routePointsRef.current
-
-    if (
-      !camera ||
-      !mapSpace ||
-      points.length < 2
-    ) {
-      return 'none' as DirectionState
-    }
-
-    // =========================================================
-    // CAMERA WORLD POSITION
-    // =========================================================
-
-    const cameraWorldPosition =
-      new THREE.Vector3()
-
-    camera.getWorldPosition(
-      cameraWorldPosition
-    )
-
-    // =========================================================
-    // CAMERA MAP POSITION
-    // =========================================================
-
-    const cameraMapPosition =
-      cameraWorldPosition.clone()
-
-    mapSpace.object.worldToLocal(
-      cameraMapPosition
-    )
-
-    currentMapPositionRef.current =
-      cameraMapPosition
-
-    // =========================================================
-    // CAMERA FORWARD WORLD
-    // =========================================================
-
-    const cameraForwardWorld =
-      new THREE.Vector3()
-
-    camera.getWorldDirection(
-      cameraForwardWorld
-    )
-
-    // =========================================================
-    // CONVERT FORWARD TO MAP SPACE
-    // =========================================================
-
-    const cameraForwardEndWorld =
-      cameraWorldPosition
-        .clone()
-        .add(
-          cameraForwardWorld
-        )
-
-    const cameraForwardEndMap =
-      cameraForwardEndWorld.clone()
-
-    mapSpace.object.worldToLocal(
-      cameraForwardEndMap
-    )
-
-    const cameraForwardMap =
-      cameraForwardEndMap
-        .sub(
-          cameraMapPosition
-        )
-        .normalize()
-
-    cameraForwardMap.y = 0
-
-    if (
-      cameraForwardMap.lengthSq() <
-      0.0001
-    ) {
-      return 'none' as DirectionState
-    }
-
-    cameraForwardMap.normalize()
-
-    // =========================================================
-    // FIND CLOSEST ROUTE SEGMENT
-    // =========================================================
-
-    let closestDistance =
-      Infinity
-
-    let closestSegment = 0
-
-    for (
-      let i = 0;
-      i < points.length - 1;
-      i++
-    ) {
-      const segmentStart =
-        points[i]
-
-      const segmentEnd =
-        points[i + 1]
-
-      const segment =
-        new THREE.Vector3()
-          .subVectors(
-            segmentEnd,
-            segmentStart
-          )
-
-      segment.y = 0
-
-      const lengthSq =
-        segment.lengthSq()
-
-      if (
-        lengthSq <
-        0.000001
-      ) {
-        continue
-      }
-
-      const toUser =
-        cameraMapPosition
-          .clone()
-          .sub(
-            segmentStart
-          )
-
-      toUser.y = 0
-
-      const t =
-        THREE.MathUtils.clamp(
-          toUser.dot(
-            segment
-          ) /
-            lengthSq,
-          0,
-          1
-        )
-
-      const closest =
-        segmentStart
-          .clone()
-          .add(
-            segment.multiplyScalar(
-              t
-            )
-          )
-
-      closest.y = 0
-
-      const distance =
-        cameraMapPosition
-          .clone()
-          .setY(0)
-          .distanceTo(
-            closest
-          )
-
-      if (
-        distance <
-        closestDistance
-      ) {
-        closestDistance =
-          distance
-
-        closestSegment =
-          i
-      }
-    }
-
-    // =========================================================
-    // NEXT ROUTE DIRECTION
-    // =========================================================
-
-    const start =
-      points[
-        closestSegment
-      ]
-
-    const end =
-      points[
-        Math.min(
-          closestSegment + 1,
-          points.length - 1
-        )
-      ]
-
-    const routeDirection =
-      new THREE.Vector3()
-        .subVectors(
-          end,
-          start
-        )
-
-    routeDirection.y = 0
-
-    if (
-      routeDirection.lengthSq() <
-      0.0001
-    ) {
-      return 'none' as DirectionState
-    }
-
-    routeDirection.normalize()
-
-    // =========================================================
-    // RELATIVE ANGLE
-    //
-    // dot:
-    //
-    // +1 = same direction
-    //  0 = 90 degrees
-    // -1 = opposite
-    //
-    // cross determines left/right.
-    // =========================================================
-
-    const dot =
-      THREE.MathUtils.clamp(
-        cameraForwardMap.dot(
-          routeDirection
-        ),
-        -1,
-        1
-      )
-
-    const crossY =
-      cameraForwardMap.x *
-        routeDirection.z -
-      cameraForwardMap.z *
-        routeDirection.x
-
-    const angle =
-      Math.atan2(
-        crossY,
-        dot
-      )
-
-    const absoluteAngle =
-      Math.abs(angle)
-
-    // =========================================================
-    // U-TURN
-    // =========================================================
-
-    if (
-      absoluteAngle >
-      THREE.MathUtils.degToRad(
-        135
-      )
-    ) {
-      return 'uturn'
-    }
-
-    // =========================================================
-    // STRAIGHT
-    // =========================================================
-
-    if (
-      absoluteAngle <
-      THREE.MathUtils.degToRad(
-        22
-      )
-    ) {
-      return 'straight'
-    }
-
-    // =========================================================
-    // LEFT
-    // =========================================================
-
-    if (
-      angle > 0
-    ) {
-      return 'left'
-    }
-
-    // =========================================================
-    // RIGHT
-    // =========================================================
-
-    return 'right'
-  }
-
-  // ===========================================================
-  // UPDATE NAVIGATION ANIMATION
-  // ===========================================================
-
-  const updateNavigationAnimation = (
-    deltaSeconds: number
-  ) => {
-    if (
-      !navigationActiveRef.current
-    ) {
-      return
-    }
-
-    animationTimeRef.current +=
-      deltaSeconds
-
-    // =========================================================
-    // ARROWS
-    // =========================================================
-
-    const arrows =
-      arrowMeshesRef.current
-
-    const total =
-      totalRouteLengthRef.current
-
-    if (
-      arrows.length > 0 &&
-      total > 0
-    ) {
-      /*
-       * Slow continuous movement.
-       */
-      arrowOffsetRef.current +=
-        deltaSeconds *
-        0.42
-
-      if (
-        arrowOffsetRef.current >
-        ARROW_SPACING
-      ) {
-        arrowOffsetRef.current -=
-          ARROW_SPACING
-      }
-
-      arrows.forEach(
-        (
-          arrow,
-          index
-        ) => {
-          const base =
-            index *
-            ARROW_SPACING
-
-          const distance =
-            (
-              base +
-              arrowOffsetRef.current
-            ) % total
-
-          const result =
-            getPointOnRoute(
-              distance
-            )
-
-          if (!result) {
-            return
-          }
-
-          arrow.position.copy(
-            result.point
-          )
-
-          arrow.position.y +=
-            ARROW_HEIGHT
-
-          /*
-           * Route tangent in X/Z.
-           */
-          const tangent =
-            result.tangent.clone()
-
-          tangent.y = 0
-
-          if (
-            tangent.lengthSq() >
-            0.0001
-          ) {
-            tangent.normalize()
-
-            /*
-             * Our arrow geometry points
-             * along local +Z after rotation.
-             */
-            const angle =
-              Math.atan2(
-                tangent.x,
-                tangent.z
-              )
-
-            arrow.rotation.set(
-              0,
-              angle,
-              0
-            )
-          }
-
-          // ---------------------------------------------------
-          // PULSE
-          // ---------------------------------------------------
-
-          const pulse =
-            0.82 +
-            Math.sin(
-              animationTimeRef.current *
-                4 +
-                index *
-                0.5
-            ) *
-              0.16
-
-          const material =
-            arrow.material
-
-          if (
-            material instanceof
-            THREE.MeshBasicMaterial
-          ) {
-            material.opacity =
-              pulse
-          }
-        }
-      )
-    }
-
-    // =========================================================
-    // DESTINATION ANIMATION
-    // =========================================================
-
-    const marker =
-      destinationMarkerRef.current
-
-    if (marker) {
-      const time =
-        animationTimeRef.current
-
-      const pulse =
-        1 +
-        Math.sin(
-          time * 2.8
-        ) *
-          0.045
-
-      marker.scale.setScalar(
-        pulse
-      )
-
-      // -------------------------------------------------------
-      // RING
-      // -------------------------------------------------------
-
-      const ring =
-        destinationRingRef.current
-
-      if (ring) {
-        const ringProgress =
-          (
-            time * 0.45
-          ) % 1
-
-        const ringScale =
-          1 +
-          ringProgress *
-            1.8
-
-        ring.scale.set(
-          ringScale,
-          ringScale,
-          ringScale
-        )
-
-        const material =
-          ring.material
+  /* =======================================================
+     SHOW DESTINATION
+  ======================================================= */
+
+  const showDestination =
+    useCallback(
+      (
+        destination: Destination
+      ) => {
+        const navigationGroup =
+          navigationGroupRef.current
 
         if (
-          material instanceof
-          THREE.MeshBasicMaterial
+          !navigationGroup
         ) {
-          material.opacity =
-            0.7 *
-            (1 -
-              ringProgress)
-        }
-      }
-
-      // -------------------------------------------------------
-      // SECOND RING
-      // -------------------------------------------------------
-
-      const pulseRing =
-        marker.getObjectByName(
-          'destination-pulse-ring'
-        )
-
-      if (pulseRing) {
-        const pulseProgress =
-          (
-            time * 0.32 +
-            0.5
-          ) % 1
-
-        const scale =
-          1 +
-          pulseProgress *
-            2.2
-
-        pulseRing.scale.set(
-          scale,
-          scale,
-          scale
-        )
-
-        const material =
-          (
-            pulseRing as THREE.Mesh
-          ).material
-
-        if (
-          material instanceof
-          THREE.MeshBasicMaterial
-        ) {
-          material.opacity =
-            0.35 *
-            (1 -
-              pulseProgress)
-        }
-      }
-
-      // -------------------------------------------------------
-      // BEAM
-      // -------------------------------------------------------
-
-      const beam =
-        destinationBeamRef.current
-
-      if (beam) {
-        const beamPulse =
-          0.10 +
-          (
-            Math.sin(
-              time * 3
-            ) +
-            1
-          ) *
-            0.035
-
-        const material =
-          beam.material
-
-        if (
-          material instanceof
-          THREE.MeshBasicMaterial
-        ) {
-          material.opacity =
-            beamPulse
-        }
-      }
-
-      // -------------------------------------------------------
-      // LABEL FLOAT
-      // -------------------------------------------------------
-
-      const label =
-        destinationLabelRef.current
-
-      if (label) {
-        label.position.y =
-          DESTINATION_LABEL_HEIGHT +
-          Math.sin(
-            time * 2
-          ) *
-            0.045
-      }
-    }
-
-    // =========================================================
-    // DIRECTION HUD
-    // =========================================================
-
-    const newDirection =
-      calculateCameraDirection()
-
-    if (
-      newDirection !==
-      currentDirectionRef.current
-    ) {
-      currentDirectionRef.current =
-        newDirection
-
-      setDirection(
-        newDirection
-      )
-    }
-  }
-
-  // ===========================================================
-  // INITIALIZATION
-  // ===========================================================
-
-  useEffect(() => {
-    let disposed = false
-
-    let renderer:
-      THREE.WebGLRenderer | null =
-        null
-
-    let scene:
-      THREE.Scene | null =
-        null
-
-    let camera:
-      THREE.PerspectiveCamera | null =
-        null
-
-    let adapter:
-      ThreeAdapter | null =
-        null
-
-    let mapSpace:
-      MapSpace | null =
-        null
-
-    let pathfinder:
-      NavMeshPathfinder | null =
-        null
-
-    let navigation:
-      MultiSetNavigation | null =
-        null
-
-    let resizeHandler:
-      (() => void) | null =
-        null
-
-    // =========================================================
-    // INIT
-    // =========================================================
-
-    const init = async () => {
-      try {
-        // =====================================================
-        // CONTAINER
-        // =====================================================
-
-        if (
-          !containerRef.current
-        ) {
-          throw new Error(
-            'AR container not available.'
-          )
-        }
-
-        // =====================================================
-        // WEBXR
-        // =====================================================
-
-        setStatus(
-          'Checking WebXR support...'
-        )
-
-        const supported =
-          await ThreeAdapter.isSupported()
-
-        if (!supported) {
-          throw new Error(
-            'WebXR immersive AR is not supported on this device.'
-          )
-        }
-
-        if (disposed) {
           return
         }
 
-        // =====================================================
-        // ENVIRONMENT
-        // =====================================================
+        selectedDestinationRef.current =
+          destination
+
+        reachedSamplesRef.current =
+          0
+
+        lastPathPositionRef.current =
+          null
+
+        resetVoiceState()
+
+        clearNavigationObjects()
+
+        /* ---------------------------------------------------
+           DESTINATION MARKER
+        --------------------------------------------------- */
+
+        const marker =
+          createDestinationMarker(
+            destination.name
+          )
+
+        marker.position.copy(
+          destination.position
+        )
+
+        navigationGroup.add(
+          marker
+        )
+
+        destinationMarkerRef.current =
+          marker
+
+        /* ---------------------------------------------------
+           DESTINATION LABEL
+        --------------------------------------------------- */
+
+        const board =
+          createDestinationBoard(
+            destination.name
+          )
+
+        if (board) {
+          board.position.copy(
+            destination.position
+          )
+
+          /*
+           * LOWERED.
+           */
+          board.position.y +=
+            DESTINATION_LABEL_HEIGHT
+
+          navigationGroup.add(
+            board
+          )
+
+          destinationBoardRef.current =
+            board
+        }
+
+        /* ---------------------------------------------------
+           ARROW PATH
+        --------------------------------------------------- */
+
+        updateArrowPath(
+          true
+        )
+
+        setSelectedDestination(
+          destination
+        )
+
+        setDistance(null)
+
+        setNavigationState(
+          'navigating'
+        )
+
+        setStatus(
+          `Navigating to ${destination.name}`
+        )
+
+        /*
+         * Initial voice.
+         */
+        speak(
+          `Navigation started. Head towards ${destination.name}.`,
+          true
+        )
+      },
+      [
+        clearNavigationObjects,
+        resetVoiceState,
+        speak,
+        updateArrowPath,
+      ]
+    )
+
+  /* =======================================================
+     PROCESS LOCALIZATION
+  ======================================================= */
+
+  const processLocalization =
+    useCallback(
+      (
+        position: THREE.Vector3
+      ) => {
+        const destination =
+          selectedDestinationRef.current
+
+        currentMapPositionRef.current =
+          position.clone()
+
+        if (
+          !destination
+        ) {
+          return
+        }
+
+        const distanceValue =
+          calculateDistance(
+            position,
+            destination.position
+          )
+
+        setDistance(
+          distanceValue
+        )
+
+        /* -------------------------------------------------
+           ARRIVAL
+        ------------------------------------------------- */
+
+        if (
+          distanceValue <=
+          REACHED_DISTANCE
+        ) {
+          reachedSamplesRef.current +=
+            1
+        } else {
+          reachedSamplesRef.current =
+            0
+        }
+
+        if (
+          reachedSamplesRef.current >=
+          REQUIRED_REACHED_SAMPLES
+        ) {
+          if (
+            navigationState !==
+            'reached'
+          ) {
+            setNavigationState(
+              'reached'
+            )
+
+            setStatus(
+              `You reached ${destination.name}`
+            )
+
+            speak(
+              `You have arrived at ${destination.name}.`,
+              true
+            )
+
+            if (
+              arrowGroupRef.current
+            ) {
+              navigationGroupRef.current?.remove(
+                arrowGroupRef.current
+              )
+
+              arrowGroupRef.current =
+                null
+            }
+          }
+
+          return
+        }
+
+        /* -------------------------------------------------
+           UPDATE ARROWS
+        ------------------------------------------------- */
+
+        updateArrowPath()
+
+        /* -------------------------------------------------
+           VOICE DISTANCE
+        ------------------------------------------------- */
+
+        announceDistance(
+          distanceValue,
+          destination.name
+        )
+
+        /* -------------------------------------------------
+           DIRECTION
+        ------------------------------------------------- */
+
+        const camera =
+          cameraRef.current
+
+        if (camera) {
+          const instruction =
+            getDirectionInstruction(
+              camera,
+              position,
+              destination.position
+            )
+
+          announceDirection(
+            instruction,
+            destination.name
+          )
+        }
+
+        setNavigationState(
+          'navigating'
+        )
+
+        setStatus(
+          `Navigating to ${destination.name}`
+        )
+      },
+      [
+        announceDirection,
+        announceDistance,
+        calculateDistance,
+        getDirectionInstruction,
+        navigationState,
+        speak,
+        updateArrowPath,
+      ]
+    )
+
+  /* =======================================================
+     INITIALIZE MULTISET
+  ======================================================= */
+
+  useEffect(() => {
+    let disposed =
+      false
+
+    let adapter:
+      | ThreeAdapter
+      | null = null
+
+    async function init() {
+      try {
+        /* -------------------------------------------------
+           WEBXR
+        ------------------------------------------------- */
+
+        setStatus(
+          'Checking WebXR...'
+        )
+
+        const supported =
+          await XRSessionManager.isSupported()
+
+        if (
+          !supported
+        ) {
+          throw new Error(
+            'WebXR is not supported on this device/browser.'
+          )
+        }
+
+        /* -------------------------------------------------
+           ENV
+        ------------------------------------------------- */
 
         const clientId =
           process.env
@@ -1898,9 +1683,9 @@ export default function KokaryaFullMapPage() {
           )
         }
 
-        // =====================================================
-        // MULTISET
-        // =====================================================
+        /* -------------------------------------------------
+           MULTISET
+        ------------------------------------------------- */
 
         setStatus(
           'Connecting to MultiSet...'
@@ -1916,19 +1701,17 @@ export default function KokaryaFullMapPage() {
 
         await client.authorize()
 
-        if (disposed) {
+        if (
+          disposed
+        ) {
           return
         }
 
-        console.log(
-          '[Kokarya] MultiSet authorized'
-        )
+        /* -------------------------------------------------
+           RENDERER
+        ------------------------------------------------- */
 
-        // =====================================================
-        // RENDERER
-        // =====================================================
-
-        renderer =
+        const renderer =
           new THREE.WebGLRenderer({
             antialias: true,
             alpha: true,
@@ -1946,9 +1729,6 @@ export default function KokaryaFullMapPage() {
           window.innerHeight
         )
 
-        renderer.xr.enabled =
-          true
-
         renderer.setClearColor(
           0x000000,
           0
@@ -1957,10 +1737,7 @@ export default function KokaryaFullMapPage() {
         renderer.domElement.style.position =
           'fixed'
 
-        renderer.domElement.style.left =
-          '0'
-
-        renderer.domElement.style.top =
+        renderer.domElement.style.inset =
           '0'
 
         renderer.domElement.style.width =
@@ -1972,28 +1749,28 @@ export default function KokaryaFullMapPage() {
         renderer.domElement.style.zIndex =
           '0'
 
-        containerRef.current.appendChild(
+        containerRef.current?.appendChild(
           renderer.domElement
         )
 
         rendererRef.current =
           renderer
 
-        // =====================================================
-        // SCENE
-        // =====================================================
+        /* -------------------------------------------------
+           SCENE
+        ------------------------------------------------- */
 
-        scene =
+        const scene =
           new THREE.Scene()
 
-        scene.background =
-          null
+        sceneRef.current =
+          scene
 
-        // =====================================================
-        // CAMERA
-        // =====================================================
+        /* -------------------------------------------------
+           CAMERA
+        ------------------------------------------------- */
 
-        camera =
+        const camera =
           new THREE.PerspectiveCamera(
             70,
             window.innerWidth /
@@ -2005,125 +1782,46 @@ export default function KokaryaFullMapPage() {
         cameraRef.current =
           camera
 
-        scene.add(
-          camera
-        )
+        /* -------------------------------------------------
+           NAVIGATION GROUP
+        ------------------------------------------------- */
 
-        // =====================================================
-        // LIGHT
-        // =====================================================
+        const navigationGroup =
+          new THREE.Group()
 
-        scene.add(
-          new THREE.AmbientLight(
-            0xffffff,
-            1
-          )
-        )
+        navigationGroupRef.current =
+          navigationGroup
 
-        // =====================================================
-        // MAP SPACE
-        // =====================================================
+        /* -------------------------------------------------
+           MAP SPACE
+        ------------------------------------------------- */
 
-        mapSpace =
+        const mapSpace =
           new MapSpace(
-            new THREE.Object3D()
+            new THREE.Object3D(),
+            {
+              hideUntilLocalized:
+                false,
+            }
           )
 
-        mapSpaceRef.current =
-          mapSpace
+        mapSpace.object.add(
+          navigationGroup
+        )
 
         scene.add(
           mapSpace.object
         )
 
-        // =====================================================
-        // LOAD NAVMESH
-        // =====================================================
+        mapSpaceRef.current =
+          mapSpace
+
+        /* -------------------------------------------------
+           XR SESSION
+        ------------------------------------------------- */
 
         setStatus(
-          'Loading NavMesh...'
-        )
-
-        const loader =
-          new GLTFLoader()
-
-        const gltf =
-          await loader.loadAsync(
-            '/navigation/kokarya-nav-mesh.glb'
-          )
-
-        if (disposed) {
-          return
-        }
-
-        const navMesh =
-          gltf.scene
-
-        mapSpace.object.add(
-          navMesh
-        )
-
-        navMesh.visible =
-          false
-
-        // =====================================================
-        // NAVMESH BOUNDS
-        // =====================================================
-
-        const bounds =
-          new THREE.Box3().setFromObject(
-            navMesh
-          )
-
-        console.log(
-          '[Kokarya] NavMesh center:',
-          bounds.getCenter(
-            new THREE.Vector3()
-          )
-        )
-
-        console.log(
-          '[Kokarya] NavMesh size:',
-          bounds.getSize(
-            new THREE.Vector3()
-          )
-        )
-
-        // =====================================================
-        // PATHFINDER
-        // =====================================================
-
-        setStatus(
-          'Creating NavMesh Pathfinder...'
-        )
-
-        pathfinder =
-          await NavMeshPathfinder.fromObject3D(
-            navMesh,
-            {
-              space:
-                mapSpace.object,
-            }
-          )
-
-        if (disposed) {
-          return
-        }
-
-        pathfinderRef.current =
-          pathfinder
-
-        console.log(
-          '[Kokarya] NavMesh groups:',
-          pathfinder.groupCount
-        )
-
-        // =====================================================
-        // XR SESSION
-        // =====================================================
-
-        setStatus(
-          'Creating AR session...'
+          'Creating MultiSet XR session...'
         )
 
         const session =
@@ -2135,53 +1833,166 @@ export default function KokaryaFullMapPage() {
               autoLocalize:
                 true,
 
-              onLocalizationFailure:
-                (reason) => {
-                  console.warn(
-                    '[Kokarya] Localization failed:',
-                    reason
+              referenceSpaceType:
+                'local',
+
+              confidenceCheck:
+                true,
+
+              confidenceThreshold:
+                0.5,
+
+              /* -----------------------------------------
+                 SESSION START
+              ----------------------------------------- */
+
+              onSessionStart:
+                () => {
+                  console.log(
+                    'XR SESSION STARTED'
+                  )
+
+                  setStatus(
+                    'Scanning...'
+                  )
+                },
+
+              /* -----------------------------------------
+                 SESSION END
+              ----------------------------------------- */
+
+              onSessionEnd:
+                () => {
+                  console.log(
+                    'XR SESSION ENDED'
                   )
 
                   setLocalized(
                     false
                   )
 
+                  setNavigationState(
+                    'idle'
+                  )
+
+                  resetVoiceState()
+
+                  if (
+                    typeof window !==
+                      'undefined' &&
+                    'speechSynthesis' in
+                      window
+                  ) {
+                    window.speechSynthesis.cancel()
+                  }
+
                   setStatus(
-                    'Localization failed'
+                    'AR session ended'
                   )
                 },
 
+              /* -----------------------------------------
+                 LOCALIZATION START
+              ----------------------------------------- */
+
+              onLocalizationInit:
+                () => {
+                  console.log(
+                    'Localization started'
+                  )
+
+                  setNavigationState(
+                    'localizing'
+                  )
+
+                  setStatus(
+                    'Scanning... Move the phone slowly and point at the mapped area.'
+                  )
+                },
+
+              /* -----------------------------------------
+                 LOCALIZATION RESULT
+              ----------------------------------------- */
+
+              onLocalizationResult:
+                (
+                  result: any
+                ) => {
+                  const position =
+                    result
+                      ?.localizeData
+                      ?.position
+
+                  if (
+                    !position
+                  ) {
+                    return
+                  }
+
+                  const mapPosition =
+                    new THREE.Vector3(
+                      position.x,
+                      position.y,
+                      position.z
+                    )
+
+                  processLocalization(
+                    mapPosition
+                  )
+                },
+
+              /* -----------------------------------------
+                 LOCALIZATION FAILURE
+              ----------------------------------------- */
+
+              onLocalizationFailure:
+                (
+                  reason: any
+                ) => {
+                  console.warn(
+                    'Localization failed:',
+                    reason
+                  )
+
+                  setStatus(
+                    'Scanning... Move the phone slowly and point at the mapped area.'
+                  )
+                },
+
+              /* -----------------------------------------
+                 ERROR
+              ----------------------------------------- */
+
               onError:
-                (sessionError) => {
+                (
+                  error: any
+                ) => {
                   console.error(
-                    '[Kokarya] XR error:',
-                    sessionError
+                    'XR ERROR:',
+                    error
                   )
 
                   setError(
-                    sessionError instanceof
-                      Error
-                      ? sessionError.message
-                      : String(
-                          sessionError
-                        )
+                    error?.message ||
+                      String(error)
+                  )
+
+                  setStatus(
+                    'MultiSet error'
                   )
                 },
             }
           )
 
-        // =====================================================
-        // ADAPTER
-        // =====================================================
+        /* -------------------------------------------------
+           THREE ADAPTER
+        ------------------------------------------------- */
 
         adapter =
           new ThreeAdapter({
             session,
-
             renderer,
-
             scene,
-
             camera,
 
             showMesh:
@@ -2190,298 +2001,277 @@ export default function KokaryaFullMapPage() {
             showGizmo:
               false,
 
-            onXRFrame:
-              ({
-                deltaSeconds,
-              }) => {
-                updateNavigationAnimation(
-                  deltaSeconds
-                )
-              },
+            useDefaultButton:
+              true,
+
+            /* -------------------------------------------
+               LOCALIZATION SUCCESS
+            ------------------------------------------- */
 
             onLocalizationSuccess:
               (
-                result,
-                worldFromMap
+                result: any,
+                worldFromMap: THREE.Matrix4
               ) => {
                 console.log(
-                  '================================'
+                  'LOCALIZATION SUCCESS'
                 )
 
                 console.log(
-                  '[Kokarya] LOCALIZED'
-                )
-
-                console.log(
-                  '[Kokarya] Confidence:',
-                  result.localizeData.confidence
-                )
-
-                console.log(
-                  '[Kokarya] worldFromMap:',
+                  'worldFromMap:',
                   worldFromMap
                 )
 
-                console.log(
-                  '================================'
+                /*
+                 * Connect MapSpace.
+                 */
+                mapSpace.connect(
+                  adapter!
                 )
+
+                const position =
+                  result
+                    ?.localizeData
+                    ?.position
+
+                if (
+                  position
+                ) {
+                  const mapPosition =
+                    new THREE.Vector3(
+                      position.x,
+                      position.y,
+                      position.z
+                    )
+
+                  currentMapPositionRef.current =
+                    mapPosition
+                }
 
                 setLocalized(
                   true
                 )
 
+                setNavigationState(
+                  'idle'
+                )
+
                 setStatus(
-                  'Ready'
+                  'Localized successfully. Select a destination.'
                 )
               },
+
+            /* -------------------------------------------
+               XR FRAME
+            ------------------------------------------- */
+
+            onXRFrame:
+              () => {
+                const now =
+                  performance.now()
+
+                /* ---------------------------------------
+                   ARROW ANIMATION
+                --------------------------------------- */
+
+                const arrows =
+                  arrowGroupRef.current
+
+                if (
+                  arrows
+                ) {
+                  arrows.children.forEach(
+                    (
+                      child,
+                      index
+                    ) => {
+                      const arrow =
+                        child as THREE.Mesh
+
+                      const pulse =
+                        1 +
+                        Math.sin(
+                          now *
+                            0.006 +
+                            index *
+                              0.8
+                        ) *
+                          0.08
+
+                      /*
+                       * Preserve original
+                       * alternating scale.
+                       */
+                      const baseScale =
+                        index %
+                          2 ===
+                        0
+                          ? 1
+                          : 0.88
+
+                      const finalScale =
+                        baseScale *
+                        pulse
+
+                      arrow.scale.set(
+                        finalScale,
+                        finalScale,
+                        finalScale
+                      )
+
+                      const material =
+                        arrow.material as THREE.MeshBasicMaterial
+
+                      material.opacity =
+                        0.68 +
+                        (
+                          Math.sin(
+                            now *
+                              0.006 +
+                              index *
+                                0.9
+                          ) +
+                          1
+                        ) *
+                          0.16
+                    }
+                  )
+                }
+
+                /* ---------------------------------------
+                   DESTINATION MARKER
+                --------------------------------------- */
+
+                const marker =
+                  destinationMarkerRef.current
+
+                if (
+                  marker
+                ) {
+                  const pulse =
+                    1 +
+                    Math.sin(
+                      now *
+                        0.004
+                    ) *
+                      0.08
+
+                  marker.scale.set(
+                    pulse,
+                    pulse,
+                    pulse
+                  )
+
+                  /*
+                   * Outer ring.
+                   */
+                  const ring =
+                    marker
+                      .children[0]
+
+                  if (
+                    ring
+                  ) {
+                    const ringScale =
+                      1 +
+                      Math.sin(
+                        now *
+                          0.004
+                      ) *
+                        0.18
+
+                    ring.scale.set(
+                      ringScale,
+                      ringScale,
+                      ringScale
+                    )
+                  }
+
+                  /*
+                   * Pin floats very slightly.
+                   */
+                  const pinGroup =
+                    marker
+                      .children[2]
+
+                  if (
+                    pinGroup
+                  ) {
+                    pinGroup.position.y =
+                      Math.sin(
+                        now *
+                          0.003
+                      ) *
+                        0.025
+                  }
+                }
+
+                /* ---------------------------------------
+                   DESTINATION LABEL
+                --------------------------------------- */
+
+                const board =
+                  destinationBoardRef.current
+
+                if (
+                  board &&
+                  cameraRef.current
+                ) {
+                  /*
+                   * Always face camera.
+                   */
+                  board.quaternion.copy(
+                    cameraRef.current.quaternion
+                  )
+                }
+              },
           })
+
+        await adapter.initialize()
+
+        if (
+          disposed
+        ) {
+          return
+        }
 
         adapterRef.current =
           adapter
 
-        // =====================================================
-        // MAP SPACE CONNECT
-        // =====================================================
-
-        mapSpace.connect(
-          adapter
-        )
-
-        console.log(
-          '[Kokarya] MapSpace connected'
-        )
-
-        // =====================================================
-        // NAVIGATION
-        // =====================================================
-
         setStatus(
-          'Creating navigation...'
-        )
-
-        navigation =
-          await MultiSetNavigation.create({
-            adapter,
-
-            mapSpace,
-
-            pathfinder,
-
-            pois:
-              DESTINATIONS,
-          })
-
-        if (disposed) {
-          return
-        }
-
-        navigationRef.current =
-          navigation
-
-        console.log(
-          '[Kokarya] Navigation created'
-        )
-
-        // =====================================================
-        // PATH UPDATED
-        // =====================================================
-
-        navigation.on(
-          'pathUpdated',
-          ({
-            corners,
-            remainingDistance,
-          }) => {
-            console.log(
-              '[Kokarya] PATH UPDATED'
-            )
-
-            console.log(
-              '[Kokarya] Corners:',
-              corners
-            )
-
-            console.log(
-              '[Kokarya] Distance:',
-              remainingDistance
-            )
-
-            setDistance(
-              remainingDistance
-            )
-
-            if (
-              !navigationActiveRef.current
-            ) {
-              return
-            }
-
-            if (
-              corners.length < 2
-            ) {
-              clearNavigationVisual()
-
-              setPathVisible(
-                false
-              )
-
-              return
-            }
-
-            createRouteVisual(
-              corners
-            )
-
-            setPathVisible(
-              true
-            )
-
-            console.log(
-              '[Kokarya] Exact AR route rendered'
-            )
-          }
-        )
-
-        // =====================================================
-        // ARRIVED
-        // =====================================================
-
-        navigation.on(
-          'arrived',
-          (poi) => {
-            console.log(
-              '[Kokarya] ARRIVED:',
-              poi.name
-            )
-
-            navigationActiveRef.current =
-              false
-
-            setIsNavigating(
-              false
-            )
-
-            setDistance(
-              0
-            )
-
-            setDirection(
-              'none'
-            )
-
-            currentDirectionRef.current =
-              'none'
-
-            setStatus(
-              `Arrived at ${poi.name}`
-            )
-
-            setArrivedMessage(
-              `You have arrived at ${poi.name}`
-            )
-
-            /*
-             * Keep destination marker
-             * briefly after arrival.
-             */
-            setTimeout(() => {
-              if (disposed) {
-                return
-              }
-
-              clearNavigationVisual()
-
-              setPathVisible(
-                false
-              )
-
-              setArrivedMessage(
-                ''
-              )
-
-              setSelectedDestination(
-                ''
-              )
-
-              selectedDestinationRef.current =
-                ''
-            }, 3500)
-          }
-        )
-
-        // =====================================================
-        // UNREACHABLE
-        // =====================================================
-
-        navigation.on(
-          'unreachable',
-          (poi) => {
-            console.warn(
-              '[Kokarya] UNREACHABLE:',
-              poi.name
-            )
-
-            navigationActiveRef.current =
-              false
-
-            setIsNavigating(
-              false
-            )
-
-            setDirection(
-              'none'
-            )
-
-            setStatus(
-              `No route to ${poi.name}`
-            )
-
-            setPathVisible(
-              false
-            )
-
-            clearNavigationVisual()
-          }
-        )
-
-        // =====================================================
-        // INITIALIZE
-        // =====================================================
-
-        await adapter.initialize()
-
-        if (disposed) {
-          return
-        }
-
-        setStatus(
-          'Ready — localizing...'
+          'Ready — tap the AR button.'
         )
 
         console.log(
-          '[Kokarya] Ready'
+          'MultiSet ThreeAdapter initialized'
         )
 
-        // =====================================================
-        // RESIZE
-        // =====================================================
+        /* -------------------------------------------------
+           RESIZE
+        ------------------------------------------------- */
 
-        resizeHandler =
+        const handleResize =
           () => {
+            const currentRenderer =
+              rendererRef.current
+
+            const currentCamera =
+              cameraRef.current
+
             if (
-              !renderer ||
-              !camera
+              !currentRenderer ||
+              !currentCamera
             ) {
               return
             }
 
-            camera.aspect =
+            currentCamera.aspect =
               window.innerWidth /
               window.innerHeight
 
-            camera.updateProjectionMatrix()
+            currentCamera.updateProjectionMatrix()
 
-            renderer.setSize(
+            currentRenderer.setSize(
               window.innerWidth,
               window.innerHeight
             )
@@ -2489,18 +2279,26 @@ export default function KokaryaFullMapPage() {
 
         window.addEventListener(
           'resize',
-          resizeHandler
+          handleResize
         )
-      } catch (err) {
+
+        return () => {
+          window.removeEventListener(
+            'resize',
+            handleResize
+          )
+        }
+      } catch (
+        err: any
+      ) {
         console.error(
-          '[Kokarya] Initialization error:',
+          'MultiSet initialization error:',
           err
         )
 
         setError(
-          err instanceof Error
-            ? err.message
-            : String(err)
+          err?.message ||
+            String(err)
         )
 
         setStatus(
@@ -2511,822 +2309,467 @@ export default function KokaryaFullMapPage() {
 
     init()
 
-    // =========================================================
-    // CLEANUP
-    // =========================================================
-
     return () => {
       disposed = true
 
-      navigationActiveRef.current =
-        false
-
-      if (resizeHandler) {
-        window.removeEventListener(
-          'resize',
-          resizeHandler
-        )
+      /*
+       * Stop voice.
+       */
+      if (
+        typeof window !==
+          'undefined' &&
+        'speechSynthesis' in
+          window
+      ) {
+        window.speechSynthesis.cancel()
       }
 
-      clearNavigationVisual()
+      clearNavigationObjects()
+
+      try {
+        mapSpaceRef.current?.dispose()
+      } catch {}
 
       try {
         adapter?.dispose()
       } catch {}
 
       try {
-        pathfinder?.dispose()
-      } catch {}
-
-      try {
-        mapSpace?.dispose()
+        rendererRef.current?.dispose()
       } catch {}
 
       if (
-        renderer &&
-        renderer.domElement.parentElement
+        rendererRef.current
       ) {
-        renderer.domElement.parentElement.removeChild(
-          renderer.domElement
-        )
+        const canvas =
+          rendererRef.current
+            .domElement
+
+        if (
+          canvas.parentElement
+        ) {
+          canvas.parentElement.removeChild(
+            canvas
+          )
+        }
       }
 
-      renderer?.dispose()
-
-      navigationRef.current =
-        null
-
-      pathfinderRef.current =
-        null
-
-      mapSpaceRef.current =
+      rendererRef.current =
         null
 
       adapterRef.current =
         null
 
-      rendererRef.current =
-        null
-
-      cameraRef.current =
+      mapSpaceRef.current =
         null
     }
-  }, [])
+  }, [
+    clearNavigationObjects,
+    processLocalization,
+    resetVoiceState,
+  ])
 
-  // ===========================================================
-  // START NAVIGATION
-  // ===========================================================
+  /* =======================================================
+     DESTINATION SELECT
+  ======================================================= */
 
-  const startNavigation = (
-    destination: Destination
-  ) => {
-    const navigation =
-      navigationRef.current
+  const handleDestinationSelect =
+    useCallback(
+      (
+        id: string
+      ) => {
+        const destination =
+          destinations.find(
+            item =>
+              item.id ===
+              id
+          )
 
-    if (!navigation) {
-      console.warn(
-        '[Kokarya] Navigation not ready'
+        if (
+          !destination
+        ) {
+          return
+        }
+
+        if (
+          !localized
+        ) {
+          setStatus(
+            'Please wait until localization is successful.'
+          )
+
+          return
+        }
+
+        showDestination(
+          destination
+        )
+      },
+      [
+        localized,
+        showDestination,
+      ]
+    )
+
+  /* =======================================================
+     RESET NAVIGATION
+  ======================================================= */
+
+  const resetNavigation =
+    useCallback(() => {
+      selectedDestinationRef.current =
+        null
+
+      reachedSamplesRef.current =
+        0
+
+      lastPathPositionRef.current =
+        null
+
+      clearNavigationObjects()
+
+      resetVoiceState()
+
+      if (
+        typeof window !==
+          'undefined' &&
+        'speechSynthesis' in
+          window
+      ) {
+        window.speechSynthesis.cancel()
+      }
+
+      setSelectedDestination(
+        null
       )
 
-      return
-    }
+      setDistance(
+        null
+      )
 
-    if (!localized) {
+      setNavigationState(
+        'idle'
+      )
+
       setStatus(
-        'Please wait for localization'
+        localized
+          ? 'Select a destination.'
+          : 'Waiting for localization...'
       )
+    }, [
+      clearNavigationObjects,
+      localized,
+      resetVoiceState,
+    ])
 
-      return
-    }
-
-    console.log(
-      '[Kokarya] Starting navigation:',
-      destination.name
-    )
-
-    selectedDestinationRef.current =
-      destination.id
-
-    setSelectedDestination(
-      destination.id
-    )
-
-    setIsNavigating(
-      true
-    )
-
-    setArrivedMessage(
-      ''
-    )
-
-    setDirection(
-      'none'
-    )
-
-    currentDirectionRef.current =
-      'none'
-
-    navigationActiveRef.current =
-      true
-
-    animationTimeRef.current =
-      0
-
-    arrowOffsetRef.current =
-      0
-
-    setStatus(
-      `Navigating to ${destination.name}`
-    )
-
-    navigation.setDestination(
-      destination.id
-    )
-  }
-
-  // ===========================================================
-  // STOP NAVIGATION
-  // ===========================================================
-
-  const stopNavigation = () => {
-    console.log(
-      '[Kokarya] Navigation stopped'
-    )
-
-    navigationActiveRef.current =
-      false
-
-    setIsNavigating(
-      false
-    )
-
-    setSelectedDestination(
-      ''
-    )
-
-    selectedDestinationRef.current =
-      ''
-
-    setDistance(
-      null
-    )
-
-    setDirection(
-      'none'
-    )
-
-    currentDirectionRef.current =
-      'none'
-
-    setPathVisible(
-      false
-    )
-
-    setArrivedMessage(
-      ''
-    )
-
-    clearNavigationVisual()
-
-    setStatus(
-      localized
-        ? 'Ready'
-        : 'Localizing...'
-    )
-  }
-
-  // ===========================================================
-  // DIRECTION UI
-  // ===========================================================
-
-  const renderDirectionHud = () => {
-    if (
-      !isNavigating ||
-      direction === 'none'
-    ) {
-      return null
-    }
-
-    if (
-      direction === 'straight'
-    ) {
-      return (
-        <div
-          className="
-            pointer-events-none
-            fixed
-            left-1/2
-            top-20
-            z-40
-            -translate-x-1/2
-          "
-        >
-          <div
-            className="
-              flex
-              items-center
-              gap-2
-              rounded-full
-              border
-              border-cyan-300/20
-              bg-black/65
-              px-4
-              py-2.5
-              text-sm
-              font-semibold
-              text-white
-              shadow-xl
-              backdrop-blur-xl
-            "
-          >
-            <ChevronUp
-              className="
-                h-5
-                w-5
-                text-cyan-300
-              "
-            />
-
-            Go straight
-          </div>
-        </div>
-      )
-    }
-
-    if (
-      direction === 'left'
-    ) {
-      return (
-        <div
-          className="
-            pointer-events-none
-            fixed
-            left-1/2
-            top-20
-            z-40
-            -translate-x-1/2
-          "
-        >
-          <div
-            className="
-              flex
-              items-center
-              gap-2
-              rounded-full
-              border
-              border-cyan-300/20
-              bg-black/65
-              px-4
-              py-2.5
-              text-sm
-              font-semibold
-              text-white
-              shadow-xl
-              backdrop-blur-xl
-            "
-          >
-            <ArrowLeft
-              className="
-                h-5
-                w-5
-                text-cyan-300
-              "
-            />
-
-            Turn left
-          </div>
-        </div>
-      )
-    }
-
-    if (
-      direction === 'right'
-    ) {
-      return (
-        <div
-          className="
-            pointer-events-none
-            fixed
-            left-1/2
-            top-20
-            z-40
-            -translate-x-1/2
-          "
-        >
-          <div
-            className="
-              flex
-              items-center
-              gap-2
-              rounded-full
-              border
-              border-cyan-300/20
-              bg-black/65
-              px-4
-              py-2.5
-              text-sm
-              font-semibold
-              text-white
-              shadow-xl
-              backdrop-blur-xl
-            "
-          >
-            <ArrowRight
-              className="
-                h-5
-                w-5
-                text-cyan-300
-              "
-            />
-
-            Turn right
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div
-        className="
-          pointer-events-none
-          fixed
-          left-1/2
-          top-20
-          z-40
-          -translate-x-1/2
-        "
-      >
-        <div
-          className="
-            flex
-            items-center
-            gap-2
-            rounded-full
-            border
-            border-amber-300/25
-            bg-black/70
-            px-4
-            py-2.5
-            text-sm
-            font-semibold
-            text-white
-            shadow-xl
-            backdrop-blur-xl
-          "
-        >
-          <RotateCcw
-            className="
-              h-5
-              w-5
-              text-amber-300
-            "
-          />
-
-          Turn around
-        </div>
-      </div>
-    )
-  }
-
-  // ===========================================================
-  // DESTINATION DRAWER
-  // ===========================================================
-
-  const DestinationDrawer =
-    () => {
-      return (
-        <Drawer>
-          <DrawerTrigger
-            
-          >
-            <Button
-              disabled={!localized}
-              className="
-                h-12
-                rounded-full
-                bg-black/80
-                px-7
-                text-sm
-                font-semibold
-                text-white
-                shadow-2xl
-                backdrop-blur-xl
-                hover:bg-black/90
-              "
-            >
-              <MapPin
-                className="
-                  mr-2
-                  h-4
-                  w-4
-                "
-              />
-
-              Choose destination
-            </Button>
-          </DrawerTrigger>
-
-          <DrawerContent>
-            <div
-              className="
-                mx-auto
-                w-full
-                max-w-lg
-              "
-            >
-              <DrawerHeader>
-                <DrawerTitle>
-                  Where do you want to go?
-                </DrawerTitle>
-
-                <DrawerDescription>
-                  Select a destination to
-                  start AR navigation.
-                </DrawerDescription>
-              </DrawerHeader>
-
-              <div
-                className="
-                  grid
-                  grid-cols-2
-                  gap-3
-                  px-4
-                "
-              >
-                {DESTINATIONS.map(
-                  (
-                    destination
-                  ) => (
-                    <DrawerClose
-                      key={
-                        destination.id
-                      }
-                      
-                    >
-                      <Button
-                        variant="outline"
-                        className="
-                          h-20
-                          justify-start
-                          rounded-2xl
-                          px-4
-                          text-left
-                        "
-                        onClick={() =>
-                          startNavigation(
-                            destination
-                          )
-                        }
-                      >
-                        <div
-                          className="
-                            mr-3
-                            flex
-                            h-10
-                            w-10
-                            shrink-0
-                            items-center
-                            justify-center
-                            rounded-full
-                            bg-red-50
-                            dark:bg-red-950/40
-                          "
-                        >
-                          <MapPin
-                            className="
-                              h-5
-                              w-5
-                              text-red-500
-                            "
-                          />
-                        </div>
-
-                        <div>
-                          <div
-                            className="
-                              font-semibold
-                            "
-                          >
-                            {
-                              destination.name
-                            }
-                          </div>
-
-                          <div
-                            className="
-                              mt-1
-                              text-xs
-                              text-muted-foreground
-                            "
-                          >
-                            Start navigation
-                          </div>
-                        </div>
-                      </Button>
-                    </DrawerClose>
-                  )
-                )}
-              </div>
-
-              <DrawerFooter>
-                <DrawerClose
-                  
-                >
-                  <Button
-                    variant="ghost"
-                    className="
-                      rounded-full
-                    "
-                  >
-                    Cancel
-                  </Button>
-                </DrawerClose>
-              </DrawerFooter>
-            </div>
-          </DrawerContent>
-        </Drawer>
-      )
-    }
-
-  // ===========================================================
-  // UI
-  // ===========================================================
+  /* =======================================================
+     RENDER
+  ======================================================= */
 
   return (
-    <main
-      className="
-        fixed
-        inset-0
-        overflow-hidden
-        bg-transparent
-      "
-    >
-      {/* =====================================================
-          AR CANVAS
-      ===================================================== */}
+    <main className="fixed inset-0 overflow-hidden bg-transparent text-white">
+      {/* =================================================
+          THREE / AR
+      ================================================= */}
 
       <div
         ref={containerRef}
-        className="
-          fixed
-          inset-0
-          z-0
-          pointer-events-none
-        "
+        className="fixed inset-0 z-0"
       />
 
-      {/* =====================================================
+      {/* =================================================
           TOP STATUS
-      ===================================================== */}
+          
+          No map here.
+      ================================================= */}
 
-      <div
-        className="
-          pointer-events-none
-          fixed
-          left-1/2
-          top-4
-          z-30
-          -translate-x-1/2
-        "
-      >
-        <div
+      <div className="pointer-events-none fixed left-4 right-4 top-4 z-30">
+        <div className="rounded-2xl border border-white/10 bg-black/60 p-4 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600">
+              <Navigation className="h-5 w-5" />
+            </div>
+
+            <div className="min-w-0">
+              <div className="text-base font-semibold">
+                Indoor Navigation
+              </div>
+
+              <div className="mt-0.5 truncate text-xs text-white/70">
+                {status}
+              </div>
+            </div>
+          </div>
+
+          {localized && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-green-400">
+              <span className="h-2 w-2 rounded-full bg-green-400" />
+
+              VPS Localized
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-3 rounded-xl bg-red-500/20 p-3 text-xs text-red-200">
+              {error}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* =================================================
+          SOUND BUTTON
+      ================================================= */}
+
+      <div className="fixed right-4 top-[7.2rem] z-40">
+        <button
+          type="button"
+          onClick={
+            toggleVoice
+          }
+          aria-label={
+            voiceEnabled
+              ? 'Mute voice guidance'
+              : 'Enable voice guidance'
+          }
           className="
             flex
+            h-11
+            w-11
             items-center
-            gap-2
+            justify-center
             rounded-full
             border
             border-white/15
             bg-black/65
-            px-4
-            py-2
-            text-sm
             text-white
             shadow-xl
             backdrop-blur-xl
+            transition
+            active:scale-95
           "
         >
-          <span
-            className={`
-              h-2
-              w-2
-              rounded-full
-              ${
-                localized
-                  ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
-                  : 'bg-yellow-400'
-              }
-            `}
-          />
-
-          {isNavigating &&
-          selectedDestinationObject
-            ? selectedDestinationObject.name
-            : localized
-              ? 'Ready'
-              : 'Localizing...'}
-        </div>
+          {voiceEnabled ? (
+            <Volume2 className="h-5 w-5" />
+          ) : (
+            <VolumeX className="h-5 w-5 text-white/50" />
+          )}
+        </button>
       </div>
 
-      {/* =====================================================
-          DIRECTION HUD
-      ===================================================== */}
+      {/* =================================================
+          CURRENT DIRECTION
+      ================================================= */}
 
-      {renderDirectionHud()}
+      {selectedDestination &&
+        navigationState ===
+          'navigating' && (
+          <div className="pointer-events-none fixed left-1/2 top-[7.2rem] z-30 -translate-x-1/2">
+            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/65 px-4 py-2 text-sm shadow-xl backdrop-blur-xl">
+              {currentInstruction ===
+                'left' && (
+                <span className="text-lg">
+                  ←
+                </span>
+              )}
 
-      {/* =====================================================
-          DESTINATION DISTANCE
-      ===================================================== */}
+              {currentInstruction ===
+                'right' && (
+                <span className="text-lg">
+                  →
+                </span>
+              )}
 
-      {isNavigating &&
-        distance !== null &&
-        selectedDestinationObject && (
-          <div
-            className="
-              pointer-events-none
-              fixed
-              bottom-24
-              left-1/2
-              z-30
-              -translate-x-1/2
-            "
-          >
-            <div
-              className="
-                flex
-                items-center
-                gap-2
-                rounded-full
-                border
-                border-white/10
-                bg-black/70
-                px-4
-                py-2
-                text-xs
-                text-white
-                shadow-xl
-                backdrop-blur-xl
-              "
-            >
-              <LocateFixed
-                className="
-                  h-4
-                  w-4
-                  text-cyan-300
-                "
-              />
+              {currentInstruction ===
+                'straight' && (
+                <span className="text-lg">
+                  ↑
+                </span>
+              )}
 
-              {distance.toFixed(
-                1
-              )}{' '}
-              m to{' '}
-              {
-                selectedDestinationObject.name
-              }
+              {currentInstruction ===
+                'uturn' && (
+                <span className="text-lg">
+                  ↶
+                </span>
+              )}
+
+              <span>
+                {getInstructionLabel(
+                  currentInstruction
+                )}
+              </span>
             </div>
           </div>
         )}
 
-      {/* =====================================================
-          ERROR
-      ===================================================== */}
+      {/* =================================================
+          NAVIGATION DISTANCE
+      ================================================= */}
 
-      {error && (
-        <div
-          className="
-            fixed
-            left-4
-            right-4
-            top-16
-            z-50
-            rounded-2xl
-            border
-            border-red-400/20
-            bg-red-950/80
-            p-3
-            text-xs
-            text-red-200
-            shadow-xl
-            backdrop-blur-xl
-          "
-        >
-          {error}
-        </div>
-      )}
+      {selectedDestination &&
+        distance !== null &&
+        navigationState ===
+          'navigating' && (
+          <div className="pointer-events-none fixed bottom-28 left-4 right-4 z-30">
+            <div className="rounded-2xl border border-white/10 bg-black/70 px-5 py-4 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-xs text-white/60">
+                    <MapPin className="h-3.5 w-3.5 text-violet-400" />
 
-      {/* =====================================================
+                    GOING TO
+                  </div>
+
+                  <div className="mt-1 truncate text-lg font-bold">
+                    {
+                      selectedDestination.name
+                    }
+                  </div>
+                </div>
+
+                <div className="shrink-0 text-right">
+                  <div className="text-2xl font-bold text-violet-300">
+                    {distance <
+                    10
+                      ? distance.toFixed(
+                          1
+                        )
+                      : Math.round(
+                          distance
+                        )}
+                    m
+                  </div>
+
+                  <div className="text-xs text-white/50">
+                    remaining
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* =================================================
+          DESTINATION REACHED
+      ================================================= */}
+
+      {navigationState ===
+        'reached' &&
+        selectedDestination && (
+          <div className="fixed inset-x-4 bottom-24 z-40">
+            <div className="rounded-3xl border border-green-400/20 bg-black/80 p-6 text-center shadow-2xl backdrop-blur-xl">
+              <div className="mx-auto flex h-20 w-20 animate-pulse items-center justify-center rounded-full bg-green-500">
+                <Check className="h-10 w-10 text-white" />
+              </div>
+
+              <div className="mt-4 text-2xl font-bold">
+                Destination Reached
+              </div>
+
+              <div className="mt-1 text-white/60">
+                {
+                  selectedDestination.name
+                }
+              </div>
+
+              <button
+                type="button"
+                onClick={
+                  resetNavigation
+                }
+                className="
+                  mt-5
+                  flex
+                  h-12
+                  w-full
+                  items-center
+                  justify-center
+                  gap-2
+                  rounded-xl
+                  bg-white
+                  font-semibold
+                  text-black
+                  transition
+                  active:scale-[0.98]
+                "
+              >
+                <RotateCcw className="h-4 w-4" />
+
+                Choose Another
+              </button>
+            </div>
+          </div>
+        )}
+
+      {/* =================================================
           DESTINATION DRAWER
-      ===================================================== */}
+      ================================================= */}
 
-      {!isNavigating && (
-        <div
-          className="
-            fixed
-            bottom-6
-            left-0
-            right-0
-            z-40
-            flex
-            justify-center
-            px-4
-          "
-        >
-          <DestinationDrawer />
-        </div>
-      )}
+      {localized &&
+        navigationState !==
+          'reached' && (
+          <div className="fixed bottom-6 left-4 right-4 z-40 flex items-center justify-center gap-3">
+            <DestinationDrawer
+              destinations={
+                destinationItems
+              }
+              selectedId={
+                selectedDestination?.id ??
+                null
+              }
+              onSelect={
+                handleDestinationSelect
+              }
+            />
 
-      {/* =====================================================
-          STOP NAVIGATION
-      ===================================================== */}
-
-      {isNavigating && (
-        <div
-          className="
-            fixed
-            bottom-6
-            left-0
-            right-0
-            z-50
-            flex
-            justify-center
-            px-4
-          "
-        >
-          <Button
-            variant="destructive"
-            onClick={
-              stopNavigation
-            }
-            className="
-              h-12
-              rounded-full
-              px-7
-              font-semibold
-              shadow-2xl
-            "
-          >
-            Stop navigation
-          </Button>
-        </div>
-      )}
-
-      {/* =====================================================
-          ARRIVAL
-      ===================================================== */}
-
-      {arrivedMessage && (
-        <div
-          className="
-            fixed
-            left-1/2
-            top-1/2
-            z-[60]
-            -translate-x-1/2
-            -translate-y-1/2
-            rounded-3xl
-            border
-            border-white/10
-            bg-black/85
-            px-7
-            py-6
-            text-center
-            text-white
-            shadow-2xl
-            backdrop-blur-xl
-          "
-        >
-          <div
-            className="
-              mb-2
-              text-4xl
-              text-emerald-400
-            "
-          >
-            ✓
+            {selectedDestination && (
+              <button
+                type="button"
+                onClick={
+                  resetNavigation
+                }
+                aria-label="Reset navigation"
+                className="
+                  flex
+                  h-12
+                  w-12
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-2xl
+                  border
+                  border-white/20
+                  bg-black/70
+                  text-white
+                  shadow-xl
+                  backdrop-blur-xl
+                  transition
+                  active:scale-95
+                "
+              >
+                <RotateCcw className="h-5 w-5" />
+              </button>
+            )}
           </div>
+        )}
 
-          <div
-            className="
-              text-base
-              font-semibold
-            "
-          >
-            Arrived
-          </div>
+      {/* =================================================
+          LOCALIZATION INDICATOR
+      ================================================= */}
 
-          <div
-            className="
-              mt-1
-              text-sm
-              text-white/60
-            "
-          >
-            {
-              selectedDestinationObject?.name
-            }
+      {!localized &&
+        !error && (
+          <div className="pointer-events-none fixed bottom-8 left-1/2 z-30 -translate-x-1/2">
+            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/70 px-5 py-3 text-sm shadow-xl backdrop-blur-xl">
+              <LocateFixed className="h-4 w-4 animate-pulse text-violet-400" />
+
+              <span>
+                Looking for your location...
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        )}
     </main>
   )
 }
