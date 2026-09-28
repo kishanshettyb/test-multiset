@@ -10,27 +10,13 @@ import {
   XRSessionManager,
 } from '@multisetai/vps/core'
 
-import {
-  ThreeAdapter,
-  MapSpace,
-} from '@multisetai/vps/three'
+import { ThreeAdapter, MapSpace } from '@multisetai/vps/three'
 
 import {
   Navigation as MultiSetNavigation,
   NavMeshPathfinder,
   buildPathRibbon,
 } from '@multisetai/vps/navigation'
-
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from '@/components/ui/drawer'
 
 import { Button } from '@/components/ui/button'
 
@@ -43,6 +29,7 @@ import {
   LocateFixed,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react'
 
 // =============================================================
@@ -55,43 +42,18 @@ type Destination = {
   position: THREE.Vector3
 }
 
-type DirectionState =
-  | 'straight'
-  | 'left'
-  | 'right'
-  | 'uturn'
-  | 'none'
+type DirectionState = 'straight' | 'left' | 'right' | 'uturn' | 'none'
 
 // =============================================================
 // DESTINATIONS
 // =============================================================
 
 const DESTINATIONS: Destination[] = [
-  {
-    id: 'entrance',
-    name: 'Entrance',
-    position: new THREE.Vector3(-0.149, -0.543, 1.201),
-  },
-  {
-    id: 'pantry',
-    name: 'Pantry',
-    position: new THREE.Vector3(0.607, -0.493, 6.68),
-  },
-  {
-    id: 'cabin-1',
-    name: 'Cabin 1',
-    position: new THREE.Vector3(4.758, -0.47, 1.897),
-  },
-  {
-    id: 'cabin-2',
-    name: 'Cabin 2',
-    position: new THREE.Vector3(8.962, -0.488, 1.736),
-  },
-  {
-    id: 'meeting-room',
-    name: 'Meeting room',
-    position: new THREE.Vector3(11.588, -0.468, 1.757),
-  },
+  { id: 'entrance',     name: 'Entrance',     position: new THREE.Vector3(-0.149, -0.543, 1.201) },
+  { id: 'pantry',       name: 'Pantry',       position: new THREE.Vector3(0.607, -0.493, 6.68)   },
+  { id: 'cabin-1',      name: 'Cabin 1',      position: new THREE.Vector3(4.758, -0.47, 1.897)   },
+  { id: 'cabin-2',      name: 'Cabin 2',      position: new THREE.Vector3(8.962, -0.488, 1.736)  },
+  { id: 'meeting-room', name: 'Meeting room', position: new THREE.Vector3(11.588, -0.468, 1.757) },
 ]
 
 // =============================================================
@@ -120,7 +82,6 @@ const createArrowTexture = (): THREE.CanvasTexture | null => {
   const canvas = document.createElement('canvas')
   canvas.width = 128
   canvas.height = 128
-
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
 
@@ -131,7 +92,6 @@ const createArrowTexture = (): THREE.CanvasTexture | null => {
   ctx.lineJoin = 'round'
   ctx.shadowColor = 'rgba(255,255,255,0.7)'
   ctx.shadowBlur = 6
-
   ctx.beginPath()
   ctx.moveTo(26, 22)
   ctx.lineTo(100, 64)
@@ -207,7 +167,6 @@ export default function KokaryaFullMapPage() {
   const animationTimeRef = useRef(0)
   const currentDirectionRef = useRef<DirectionState>('none')
 
-  // Mirror of React state so we can poll without stale closures.
   const localizedRef = useRef(false)
   const sessionActiveRef = useRef(false)
 
@@ -233,19 +192,14 @@ export default function KokaryaFullMapPage() {
   const [arrivedMessage, setArrivedMessage] = useState('')
   const [direction, setDirection] = useState<DirectionState>('none')
   const [voiceEnabled, setVoiceEnabled] = useState(true)
+  const [showDestinations, setShowDestinations] = useState(false)
 
   const selectedDestinationObject = DESTINATIONS.find(
     (d) => d.id === selectedDestination
   )
 
-  // Keep refs in sync with state.
-  useEffect(() => {
-    localizedRef.current = localized
-  }, [localized])
-
-  useEffect(() => {
-    sessionActiveRef.current = sessionActive
-  }, [sessionActive])
+  useEffect(() => { localizedRef.current = localized }, [localized])
+  useEffect(() => { sessionActiveRef.current = sessionActive }, [sessionActive])
 
   // ===========================================================
   // VOICE ENGINE
@@ -257,9 +211,7 @@ export default function KokaryaFullMapPage() {
     if (!('speechSynthesis' in window)) return
 
     const now = Date.now()
-    if (!force && now - lastVoiceTimeRef.current < VOICE_COOLDOWN) {
-      return
-    }
+    if (!force && now - lastVoiceTimeRef.current < VOICE_COOLDOWN) return
     lastVoiceTimeRef.current = now
 
     const speech = window.speechSynthesis
@@ -275,7 +227,6 @@ export default function KokaryaFullMapPage() {
     const preferredVoice =
       voices.find((v) => v.lang.toLowerCase().startsWith('en-in')) ??
       voices.find((v) => v.lang.toLowerCase().startsWith('en'))
-
     if (preferredVoice) utterance.voice = preferredVoice
 
     speech.speak(utterance)
@@ -286,20 +237,10 @@ export default function KokaryaFullMapPage() {
     if (lastSpokenDirectionRef.current === nextDirection) return
     lastSpokenDirectionRef.current = nextDirection
 
-    switch (nextDirection) {
-      case 'straight':
-        speak('Go straight.', true)
-        break
-      case 'left':
-        speak('Turn left.', true)
-        break
-      case 'right':
-        speak('Turn right.', true)
-        break
-      case 'uturn':
-        speak('Turn around.', true)
-        break
-    }
+    if (nextDirection === 'straight') speak('Go straight.', true)
+    else if (nextDirection === 'left') speak('Turn left.', true)
+    else if (nextDirection === 'right') speak('Turn right.', true)
+    else if (nextDirection === 'uturn') speak('Turn around.', true)
   }
 
   const speakDistance = (remainingDistance: number) => {
@@ -321,10 +262,7 @@ export default function KokaryaFullMapPage() {
     setVoiceEnabled(next)
 
     if (!next) {
-      if (
-        typeof window !== 'undefined' &&
-        'speechSynthesis' in window
-      ) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel()
       }
       return
@@ -334,30 +272,20 @@ export default function KokaryaFullMapPage() {
 
   // ===========================================================
   // LOCALIZATION POLLER
-  //
-  // Returns a promise that resolves once localization succeeds
-  // or the timeout elapses.
   // ===========================================================
 
   const waitForLocalization = (
     timeoutMs = LOCALIZATION_TIMEOUT_MS
-  ): Promise<boolean> => {
-    return new Promise((resolve) => {
+  ): Promise<boolean> =>
+    new Promise((resolve) => {
       const start = Date.now()
       const check = () => {
-        if (localizedRef.current) {
-          resolve(true)
-          return
-        }
-        if (Date.now() - start > timeoutMs) {
-          resolve(false)
-          return
-        }
+        if (localizedRef.current) return resolve(true)
+        if (Date.now() - start > timeoutMs) return resolve(false)
         setTimeout(check, 120)
       }
       check()
     })
-  }
 
   // ===========================================================
   // DESTINATION LABEL
@@ -367,7 +295,6 @@ export default function KokaryaFullMapPage() {
     const canvas = document.createElement('canvas')
     canvas.width = 640
     canvas.height = 180
-
     const context = canvas.getContext('2d')
     if (!context) return null
 
@@ -577,8 +504,7 @@ export default function KokaryaFullMapPage() {
     const mapSpace = mapSpaceRef.current
     if (!mapSpace) return null
 
-    const arrowTexture =
-      arrowTextureRef.current ?? createArrowTexture()
+    const arrowTexture = arrowTextureRef.current ?? createArrowTexture()
     if (!arrowTexture) return null
     arrowTextureRef.current = arrowTexture
 
@@ -693,9 +619,7 @@ export default function KokaryaFullMapPage() {
     const mapSpace = mapSpaceRef.current
     const points = routePointsRef.current
 
-    if (!camera || !mapSpace || points.length < 2) {
-      return 'none'
-    }
+    if (!camera || !mapSpace || points.length < 2) return 'none'
 
     const cameraWorldPosition = new THREE.Vector3()
     camera.getWorldPosition(cameraWorldPosition)
@@ -727,34 +651,19 @@ export default function KokaryaFullMapPage() {
     for (let i = 0; i < points.length - 1; i++) {
       const segmentStart = points[i]
       const segmentEnd = points[i + 1]
-      const segment = new THREE.Vector3().subVectors(
-        segmentEnd,
-        segmentStart
-      )
+      const segment = new THREE.Vector3().subVectors(segmentEnd, segmentStart)
       segment.y = 0
-
       const lengthSq = segment.lengthSq()
       if (lengthSq < 0.000001) continue
 
       const toUser = cameraMapPosition.clone().sub(segmentStart)
       toUser.y = 0
 
-      const t = THREE.MathUtils.clamp(
-        toUser.dot(segment) / lengthSq,
-        0,
-        1
-      )
-
-      const closest = segmentStart
-        .clone()
-        .add(segment.clone().multiplyScalar(t))
+      const t = THREE.MathUtils.clamp(toUser.dot(segment) / lengthSq, 0, 1)
+      const closest = segmentStart.clone().add(segment.clone().multiplyScalar(t))
       closest.y = 0
 
-      const distance = cameraMapPosition
-        .clone()
-        .setY(0)
-        .distanceTo(closest)
-
+      const distance = cameraMapPosition.clone().setY(0).distanceTo(closest)
       if (distance < closestDistance) {
         closestDistance = distance
         closestSegment = i
@@ -762,9 +671,7 @@ export default function KokaryaFullMapPage() {
     }
 
     const start = points[closestSegment]
-    const end =
-      points[Math.min(closestSegment + 1, points.length - 1)]
-
+    const end = points[Math.min(closestSegment + 1, points.length - 1)]
     const routeDirection = new THREE.Vector3().subVectors(end, start)
     routeDirection.y = 0
     if (routeDirection.lengthSq() < 0.0001) return 'none'
@@ -775,11 +682,9 @@ export default function KokaryaFullMapPage() {
       -1,
       1
     )
-
     const crossY =
       cameraForwardMap.x * routeDirection.z -
       cameraForwardMap.z * routeDirection.x
-
     const angle = Math.atan2(crossY, dot)
     const absoluteAngle = Math.abs(angle)
 
@@ -798,7 +703,6 @@ export default function KokaryaFullMapPage() {
     if (!marker) return
 
     const time = animationTimeRef.current
-
     const pulse = 1 + Math.sin(time * 2.8) * 0.045
     marker.scale.setScalar(pulse)
 
@@ -807,7 +711,6 @@ export default function KokaryaFullMapPage() {
       const ringProgress = (time * 0.45) % 1
       const ringScale = 1 + ringProgress * 1.8
       ring.scale.set(ringScale, ringScale, ringScale)
-
       const mat = ring.material
       if (mat instanceof THREE.MeshBasicMaterial) {
         mat.opacity = 0.7 * (1 - ringProgress)
@@ -819,7 +722,6 @@ export default function KokaryaFullMapPage() {
       const pulseProgress = (time * 0.32 + 0.5) % 1
       const scale = 1 + pulseProgress * 2.2
       pulseRing.scale.set(scale, scale, scale)
-
       const mat = (pulseRing as THREE.Mesh).material
       if (mat instanceof THREE.MeshBasicMaterial) {
         mat.opacity = 0.35 * (1 - pulseProgress)
@@ -848,7 +750,6 @@ export default function KokaryaFullMapPage() {
 
   const onNavigationTick = (deltaSeconds: number) => {
     animationTimeRef.current += deltaSeconds
-
     if (!navigationActiveRef.current) return
 
     const material = ribbonMaterialRef.current
@@ -879,7 +780,6 @@ export default function KokaryaFullMapPage() {
     if (!overlayRoot) return
 
     let disposed = false
-
     let renderer: THREE.WebGLRenderer | null = null
     let scene: THREE.Scene | null = null
     let camera: THREE.PerspectiveCamera | null = null
@@ -903,12 +803,9 @@ export default function KokaryaFullMapPage() {
         }
         if (disposed) return
 
-        const clientId =
-          process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID
-        const clientSecret =
-          process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET
-        const mapCode =
-          process.env.NEXT_PUBLIC_MULTISET_MAP_CODE
+        const clientId = process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID
+        const clientSecret = process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET
+        const mapCode = process.env.NEXT_PUBLIC_MULTISET_MAP_CODE
 
         if (!clientId || !clientSecret || !mapCode) {
           throw new Error('Missing MultiSet environment variables.')
@@ -922,13 +819,9 @@ export default function KokaryaFullMapPage() {
         })
         await client.authorize()
         if (disposed) return
-
         console.log('[Kokarya] MultiSet authorized')
 
-        renderer = new THREE.WebGLRenderer({
-          antialias: true,
-          alpha: true,
-        })
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
         renderer.setSize(window.innerWidth, window.innerHeight)
         renderer.xr.enabled = true
@@ -955,7 +848,6 @@ export default function KokaryaFullMapPage() {
         )
         cameraRef.current = camera
         scene.add(camera)
-
         scene.add(new THREE.AmbientLight(0xffffff, 1))
 
         mapSpace = new MapSpace(new THREE.Object3D())
@@ -963,9 +855,7 @@ export default function KokaryaFullMapPage() {
         scene.add(mapSpace.object)
 
         const loader = new GLTFLoader()
-        const gltf = await loader.loadAsync(
-          '/navigation/kokarya-nav-mesh.glb'
-        )
+        const gltf = await loader.loadAsync('/navigation/kokarya-nav-mesh.glb')
         if (disposed) return
 
         const navMesh = gltf.scene
@@ -990,9 +880,6 @@ export default function KokaryaFullMapPage() {
 
         console.log('[Kokarya] NavMesh groups:', pathfinder.groupCount)
 
-        // -----------------------------------------------------
-        // XR session
-        // -----------------------------------------------------
         const session = new XRSessionManager(
           renderer.getContext() as WebGL2RenderingContext,
           {
@@ -1018,9 +905,6 @@ export default function KokaryaFullMapPage() {
         )
         sessionRef.current = session
 
-        // -----------------------------------------------------
-        // Adapter
-        // -----------------------------------------------------
         adapter = new ThreeAdapter({
           session,
           renderer,
@@ -1029,9 +913,6 @@ export default function KokaryaFullMapPage() {
           showMesh: false,
           showGizmo: false,
 
-          // Hide the SDK's built-in START AR button so it
-          // cannot be covered by our UI and so users only ever
-          // interact with our own buttons.
           onButtonCreated: (btn) => {
             btn.style.display = 'none'
           },
@@ -1054,9 +935,6 @@ export default function KokaryaFullMapPage() {
 
         mapSpace.connect(adapter)
 
-        // -----------------------------------------------------
-        // Navigation
-        // -----------------------------------------------------
         navigation = await MultiSetNavigation.create({
           adapter,
           mapSpace,
@@ -1098,9 +976,7 @@ export default function KokaryaFullMapPage() {
           setDirection('none')
           currentDirectionRef.current = 'none'
 
-          try {
-            navigationRef.current?.stop()
-          } catch {}
+          try { navigationRef.current?.stop() } catch {}
 
           setArrivedMessage(`You have arrived at ${poi.name}`)
           speak(`You have arrived at ${poi.name}.`, true)
@@ -1121,18 +997,14 @@ export default function KokaryaFullMapPage() {
           setIsNavigating(false)
           setDirection('none')
 
-          try {
-            navigationRef.current?.stop()
-          } catch {}
+          try { navigationRef.current?.stop() } catch {}
 
           speak(`There is no route to ${poi.name}.`, true)
           clearNavigationVisual()
         })
 
-        // Initialize adapter (does NOT start the AR session).
         await adapter.initialize()
         if (disposed) return
-
         console.log('[Kokarya] Ready — waiting for user to start AR')
 
         resizeHandler = () => {
@@ -1153,10 +1025,7 @@ export default function KokaryaFullMapPage() {
     return () => {
       disposed = true
 
-      if (
-        typeof window !== 'undefined' &&
-        'speechSynthesis' in window
-      ) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel()
       }
 
@@ -1166,10 +1035,7 @@ export default function KokaryaFullMapPage() {
         window.removeEventListener('resize', resizeHandler)
       }
 
-      try {
-        navigation?.stop()
-      } catch {}
-
+      try { navigation?.stop() } catch {}
       clearNavigationVisual()
 
       if (ribbonMeshRef.current) {
@@ -1182,20 +1048,12 @@ export default function KokaryaFullMapPage() {
       arrowTextureRef.current?.dispose()
       arrowTextureRef.current = null
 
-      try {
-        adapter?.dispose()
-      } catch {}
-      try {
-        pathfinder?.dispose()
-      } catch {}
-      try {
-        mapSpace?.dispose()
-      } catch {}
+      try { adapter?.dispose() } catch {}
+      try { pathfinder?.dispose() } catch {}
+      try { mapSpace?.dispose() } catch {}
 
       if (renderer && renderer.domElement.parentElement) {
-        renderer.domElement.parentElement.removeChild(
-          renderer.domElement
-        )
+        renderer.domElement.parentElement.removeChild(renderer.domElement)
       }
       renderer?.dispose()
 
@@ -1210,11 +1068,7 @@ export default function KokaryaFullMapPage() {
   }, [overlayRoot])
 
   // ===========================================================
-  // START AR SESSION
-  //
-  // The browser consumes the user-activation token on the first
-  // await. `adapter.startSession()` MUST be the first async call
-  // inside this handler. Nothing else can be awaited before it.
+  // START AR
   // ===========================================================
 
   const handleStartAR = () => {
@@ -1224,11 +1078,7 @@ export default function KokaryaFullMapPage() {
       return
     }
 
-    // ⚠️ First async call — MUST be startSession.
-    // We do not `await` before this line and we do not call
-    // `setState` before this line either (setState is fine, but
-    // we want to make sure the activation token reaches the
-    // session request without any intermediate await).
+    // MUST be the first async call in the tap handler.
     adapter
       .startSession()
       .then(() => {
@@ -1239,20 +1089,13 @@ export default function KokaryaFullMapPage() {
       .catch((err) => {
         console.error('[Kokarya] startSession failed:', err)
         setError(
-          err instanceof Error
-            ? err.message
-            : 'Failed to start AR session.'
+          err instanceof Error ? err.message : 'Failed to start AR session.'
         )
       })
   }
 
   // ===========================================================
   // START NAVIGATION
-  //
-  // Two paths:
-  //   A) Session already running → just set destination.
-  //   B) Session not running → start session first, then set
-  //      destination once localization completes.
   // ===========================================================
 
   const startNavigation = (destination: Destination) => {
@@ -1264,36 +1107,25 @@ export default function KokaryaFullMapPage() {
       return
     }
 
-    // Reset any previously running route synchronously.
-    try {
-      navigation.stop()
-    } catch {}
+    try { navigation.stop() } catch {}
 
     if (sessionActiveRef.current) {
-      // Session already active — try to begin immediately if we
-      // are localized, otherwise wait for localization.
       void beginNavigationAfterLocalization(navigation, destination)
       return
     }
 
-    // ⚠️ First async call in the tap handler MUST be startSession.
-    // We are inside a click handler so the user-activation token
-    // is still live at this point.
     adapter
       .startSession()
       .then(() => {
         sessionActiveRef.current = true
         setSessionActive(true)
         console.log('[Kokarya] XR session started from destination tap')
-
         return beginNavigationAfterLocalization(navigation, destination)
       })
       .catch((err) => {
         console.error('[Kokarya] startSession failed:', err)
         setError(
-          err instanceof Error
-            ? err.message
-            : 'Failed to start AR session.'
+          err instanceof Error ? err.message : 'Failed to start AR session.'
         )
       })
   }
@@ -1312,10 +1144,7 @@ export default function KokaryaFullMapPage() {
       return
     }
 
-    console.log(
-      '[Kokarya] Starting navigation:',
-      destination.name
-    )
+    console.log('[Kokarya] Starting navigation:', destination.name)
 
     selectedDestinationRef.current = destination.id
     setSelectedDestination(destination.id)
@@ -1331,10 +1160,7 @@ export default function KokaryaFullMapPage() {
     navigationActiveRef.current = true
     animationTimeRef.current = 0
 
-    speak(
-      `Navigation started. Head towards ${destination.name}.`,
-      true
-    )
+    speak(`Navigation started. Head towards ${destination.name}.`, true)
 
     navigation.setDestination(destination.id)
   }
@@ -1346,9 +1172,7 @@ export default function KokaryaFullMapPage() {
   const stopNavigation = () => {
     console.log('[Kokarya] Navigation stopped')
 
-    try {
-      navigationRef.current?.stop()
-    } catch {}
+    try { navigationRef.current?.stop() } catch {}
 
     navigationActiveRef.current = false
     setIsNavigating(false)
@@ -1359,10 +1183,7 @@ export default function KokaryaFullMapPage() {
     currentDirectionRef.current = 'none'
     setArrivedMessage('')
 
-    if (
-      typeof window !== 'undefined' &&
-      'speechSynthesis' in window
-    ) {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }
 
@@ -1398,7 +1219,6 @@ export default function KokaryaFullMapPage() {
         </div>
       )
     }
-
     if (direction === 'left') {
       return (
         <div className={wrapperClass}>
@@ -1409,7 +1229,6 @@ export default function KokaryaFullMapPage() {
         </div>
       )
     }
-
     if (direction === 'right') {
       return (
         <div className={wrapperClass}>
@@ -1420,7 +1239,6 @@ export default function KokaryaFullMapPage() {
         </div>
       )
     }
-
     return (
       <div className={wrapperClass}>
         <div
@@ -1468,7 +1286,7 @@ export default function KokaryaFullMapPage() {
       {/* DIRECTION HUD */}
       {renderDirectionHud()}
 
-      {/* VOICE CONTROL */}
+      {/* VOICE */}
       {isNavigating && (
         <div className="pointer-events-auto fixed right-4 top-20 z-50">
           <Button
@@ -1516,89 +1334,115 @@ export default function KokaryaFullMapPage() {
         </div>
       )}
 
-      {/* STEP 1: START AR */}
+      {/* START AR */}
       {!sessionActive && (
         <div className="pointer-events-auto fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4">
-          <Button
+          <button
+            type="button"
             onClick={handleStartAR}
-            className="h-14 rounded-full bg-cyan-500 px-8 text-base font-semibold text-black shadow-2xl hover:bg-cyan-400"
+            className="flex h-14 items-center gap-2 rounded-full bg-cyan-500 px-8 text-base font-semibold text-black shadow-2xl hover:bg-cyan-400"
           >
-            <MapPin className="mr-2 h-5 w-5" />
+            <MapPin className="h-5 w-5" />
             START AR
-          </Button>
+          </button>
         </div>
       )}
 
-      {/* STEP 2: PICK DESTINATION */}
+      {/* CHOOSE DESTINATION TRIGGER */}
       {sessionActive && !isNavigating && (
         <div className="pointer-events-auto fixed bottom-20 left-0 right-0 z-40 flex justify-center px-4">
-          <Drawer>
-            <DrawerTrigger>
-              <Button
-                disabled={!localized}
-                className="h-12 rounded-full bg-black/80 px-7 text-sm font-semibold text-white shadow-2xl backdrop-blur-xl hover:bg-black/90 disabled:opacity-50"
-              >
-                <MapPin className="mr-2 h-4 w-4" />
-                {localized ? 'Choose destination' : 'Localizing...'}
-              </Button>
-            </DrawerTrigger>
-
-            <DrawerContent>
-              <div className="mx-auto w-full max-w-lg">
-                <DrawerHeader>
-                  <DrawerTitle>Where do you want to go?</DrawerTitle>
-                  <DrawerDescription>
-                    Select a destination to start AR navigation.
-                  </DrawerDescription>
-                </DrawerHeader>
-
-                <div className="grid grid-cols-2 gap-3 px-4">
-                  {DESTINATIONS.map((destination) => (
-                    <DrawerClose key={destination.id}>
-                      <Button
-                        variant="outline"
-                        className="h-20 justify-start rounded-2xl px-4 text-left"
-                        onClick={() => startNavigation(destination)}
-                      >
-                        <div className="mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 dark:bg-red-950/40">
-                          <MapPin className="h-5 w-5 text-red-500" />
-                        </div>
-                        <div>
-                          <div className="font-semibold">
-                            {destination.name}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            Start navigation
-                          </div>
-                        </div>
-                      </Button>
-                    </DrawerClose>
-                  ))}
-                </div>
-
-                <DrawerFooter>
-                  <DrawerClose>
-                    <Button variant="ghost" className="rounded-full">
-                      Cancel
-                    </Button>
-                  </DrawerClose>
-                </DrawerFooter>
-              </div>
-            </DrawerContent>
-          </Drawer>
+          <button
+            type="button"
+            disabled={!localized}
+            onClick={() => setShowDestinations(true)}
+            className="flex h-12 items-center gap-2 rounded-full bg-black/80 px-7 text-sm font-semibold text-white shadow-2xl backdrop-blur-xl hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <MapPin className="h-4 w-4" />
+            {localized ? 'Choose destination' : 'Localizing...'}
+          </button>
         </div>
       )}
 
-      {/* STEP 3: STOP NAVIGATION */}
+      {/*
+        DESTINATION PANEL
+        ─ Inline (NOT portaled) so it lives inside overlayRoot
+        ─ and is therefore visible in an AR DOM overlay session.
+      */}
+      {showDestinations && (
+        <div
+          className="pointer-events-auto fixed inset-0 z-[70] flex items-end justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowDestinations(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-t-3xl border-t border-white/10 bg-neutral-950 p-5 pb-8 text-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <div className="text-lg font-semibold">
+                  Where do you want to go?
+                </div>
+                <div className="mt-0.5 text-xs text-white/60">
+                  Select a destination to start AR navigation.
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setShowDestinations(false)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 hover:bg-white/20"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {DESTINATIONS.map((destination) => (
+                <button
+                  key={destination.id}
+                  type="button"
+                  onClick={() => {
+                    setShowDestinations(false)
+                    startNavigation(destination)
+                  }}
+                  className="flex h-20 items-center justify-start gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 text-left transition hover:bg-white/10"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+                    <MapPin className="h-5 w-5 text-red-400" />
+                  </span>
+                  <span>
+                    <span className="block font-semibold">
+                      {destination.name}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-white/50">
+                      Start navigation
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowDestinations(false)}
+              className="mt-4 h-11 w-full rounded-full bg-white/5 text-sm font-medium text-white/80 hover:bg-white/10"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STOP NAVIGATION */}
       {isNavigating && (
         <div className="pointer-events-auto fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4">
-          <Button
-            variant="destructive"
+          <button
+            type="button"
             onClick={stopNavigation}
-            className="h-12 rounded-full px-7 font-semibold shadow-2xl"
+            className="flex h-12 items-center rounded-full bg-red-600 px-7 text-sm font-semibold text-white shadow-2xl hover:bg-red-500"
           >
             Stop navigation
-          </Button>
+          </button>
         </div>
       )}
 
