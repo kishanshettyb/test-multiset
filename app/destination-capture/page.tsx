@@ -1,1296 +1,1451 @@
-"use client";
+'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
+import { useCallback, useEffect, useRef, useState } from 'react'
+import * as THREE from 'three'
 
 import {
   MultisetClient,
   XRSessionManager,
-} from "@multisetai/vps/core";
+} from '@multisetai/vps/core'
 
-import { ThreeAdapter } from "@multisetai/vps/three";
+import {
+  MapSpace,
+  ThreeAdapter,
+} from '@multisetai/vps/three'
 
 type Destination = {
-  id: string;
-  name: string;
+  id: string
+  name: string
   position: {
-    x: number;
-    y: number;
-    z: number;
-  };
-};
-
-const MAP_CODE =
-  process.env.NEXT_PUBLIC_MULTISET_MAP_CODE ?? "";
-
-const CLIENT_ID =
-  process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID ?? "";
-
-const CLIENT_SECRET =
-  process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET ?? "";
+    x: number
+    y: number
+    z: number
+  }
+}
 
 export default function DestinationCapturePage() {
-  // --------------------------------------------------
+  // =========================================================
   // DOM
-  // --------------------------------------------------
+  // =========================================================
 
   const containerRef =
-    useRef<HTMLDivElement | null>(null);
+    useRef<HTMLDivElement | null>(null)
 
-  // --------------------------------------------------
-  // Three.js
-  // --------------------------------------------------
+  // =========================================================
+  // THREE
+  // =========================================================
 
   const rendererRef =
-    useRef<THREE.WebGLRenderer | null>(null);
+    useRef<THREE.WebGLRenderer | null>(null)
 
   const sceneRef =
-    useRef<THREE.Scene | null>(null);
+    useRef<THREE.Scene | null>(null)
 
   const cameraRef =
-    useRef<THREE.PerspectiveCamera | null>(null);
+    useRef<THREE.PerspectiveCamera | null>(null)
 
-  // --------------------------------------------------
-  // MultiSet
-  // --------------------------------------------------
+  // =========================================================
+  // MULTISET
+  // =========================================================
 
   const adapterRef =
-    useRef<ThreeAdapter | null>(null);
+    useRef<ThreeAdapter | null>(null)
 
-  const sessionRef =
-    useRef<XRSessionManager | null>(null);
+  const mapSpaceRef =
+    useRef<MapSpace | null>(null)
 
-  /**
-   * MultiSet:
-   *
-   * map coordinates -> world coordinates
-   */
   const worldFromMapRef =
-    useRef<THREE.Matrix4 | null>(null);
+    useRef<THREE.Matrix4 | null>(null)
 
-  /**
-   * Latest camera position in MAP coordinates.
-   */
+  // =========================================================
+  // CURRENT MAP POSITION
+  // =========================================================
+
   const currentMapPositionRef =
-    useRef<THREE.Vector3 | null>(null);
+    useRef<THREE.Vector3 | null>(null)
 
-  /**
-   * Avoid React state updates on every XR frame.
-   */
-  const lastUiUpdateRef =
-    useRef(0);
+  const lastPositionUpdateRef =
+    useRef(0)
 
-  // --------------------------------------------------
-  // UI state
-  // --------------------------------------------------
+  // =========================================================
+  // STATE
+  // =========================================================
 
   const [status, setStatus] =
-    useState("Initializing...");
+    useState('Initializing...')
+
+  const [error, setError] =
+    useState('')
 
   const [localized, setLocalized] =
-    useState(false);
+    useState(false)
 
   const [destinationName, setDestinationName] =
-    useState("");
+    useState('')
 
   const [currentPosition, setCurrentPosition] =
-    useState<{
-      x: number;
-      y: number;
-      z: number;
-    } | null>(null);
+    useState<Destination['position'] | null>(null)
 
   const [destinations, setDestinations] =
-    useState<Destination[]>([]);
+    useState<Destination[]>([])
 
-  // --------------------------------------------------
-  // Create destination ID
-  // --------------------------------------------------
+  // =========================================================
+  // CREATE ID
+  // =========================================================
 
   const createId = useCallback(
     (name: string) => {
       return name
         .trim()
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
     },
     []
-  );
+  )
 
-  // --------------------------------------------------
-  // Generate DESTINATIONS code
-  // --------------------------------------------------
+  // =========================================================
+  // CAPTURE DESTINATION
+  // =========================================================
 
-  const generatedCode = useMemo(() => {
-    if (destinations.length === 0) {
-      return `const DESTINATIONS: Destination[] = [];`;
+  const captureDestination = useCallback(() => {
+    if (!localized) {
+      alert(
+        'Please wait until MultiSet is localized.'
+      )
+
+      return
     }
 
-    const items = destinations
-      .map((destination) => {
-        const safeName =
-          destination.name.replace(
-            /'/g,
-            "\\'"
-          );
+    const name =
+      destinationName.trim()
 
-        return `  {
-    id: '${destination.id}',
-    name: '${safeName}',
-    position: new THREE.Vector3(
-      ${destination.position.x},
-      ${destination.position.y},
-      ${destination.position.z}
-    ),
-  }`;
-      })
-      .join(",\n\n");
+    if (!name) {
+      alert(
+        'Enter destination name.'
+      )
 
-    return `const DESTINATIONS: Destination[] = [
+      return
+    }
 
-${items}
+    const position =
+      currentMapPositionRef.current
 
-];`;
-  }, [destinations]);
+    if (!position) {
+      alert(
+        'Current map position is not available.'
+      )
 
-  // --------------------------------------------------
-  // Get current MAP position
-  // --------------------------------------------------
+      return
+    }
 
-  const getCurrentMapPosition =
-    useCallback(() => {
-      const position =
-        currentMapPositionRef.current;
+    const destination: Destination = {
+      id: createId(name),
 
-      if (!position) {
-        return null;
-      }
+      name,
 
-      return {
+      position: {
         x: Number(
           position.x.toFixed(3)
         ),
+
         y: Number(
           position.y.toFixed(3)
         ),
+
         z: Number(
           position.z.toFixed(3)
         ),
-      };
-    }, []);
+      },
+    }
 
-  // --------------------------------------------------
-  // Capture
-  // --------------------------------------------------
+    setDestinations(
+      previous => {
+        const existingIndex =
+          previous.findIndex(
+            item =>
+              item.id ===
+              destination.id
+          )
 
-  const captureDestination =
-    useCallback(() => {
-      if (!localized) {
-        alert(
-          "Please wait until MultiSet is localized."
-        );
-
-        return;
-      }
-
-      const name =
-        destinationName.trim();
-
-      if (!name) {
-        alert(
-          "Enter destination name."
-        );
-
-        return;
-      }
-
-      const position =
-        getCurrentMapPosition();
-
-      if (!position) {
-        alert(
-          "Current map position is not available."
-        );
-
-        return;
-      }
-
-      const id =
-        createId(name);
-
-      if (!id) {
-        alert(
-          "Invalid destination name."
-        );
-
-        return;
-      }
-
-      const destination: Destination = {
-        id,
-        name,
-        position,
-      };
-
-      setDestinations(
-        (previous) => {
-          const existingIndex =
-            previous.findIndex(
-              (item) =>
-                item.id === id
-            );
-
-          // Update existing destination
-          if (existingIndex !== -1) {
-            const updated = [
-              ...previous,
-            ];
-
-            updated[existingIndex] =
-              destination;
-
-            return updated;
-          }
-
-          // Add new destination
-          return [
+        // Update if same ID exists
+        if (
+          existingIndex !== -1
+        ) {
+          const updated = [
             ...previous,
-            destination,
-          ];
+          ]
+
+          updated[existingIndex] =
+            destination
+
+          return updated
         }
-      );
 
-      setDestinationName("");
+        // Add new destination
+        return [
+          ...previous,
+          destination,
+        ]
+      }
+    )
 
-      console.log(
-        "Captured destination:",
-        destination
-      );
-    }, [
-      localized,
-      destinationName,
-      getCurrentMapPosition,
-      createId,
-    ]);
+    setDestinationName('')
 
-  // --------------------------------------------------
-  // Delete destination
-  // --------------------------------------------------
+    console.log(
+      '[Destination Capture]',
+      destination
+    )
+  }, [
+    localized,
+    destinationName,
+    createId,
+  ])
+
+  // =========================================================
+  // DELETE
+  // =========================================================
 
   const deleteDestination =
     useCallback(
       (id: string) => {
         setDestinations(
-          (previous) =>
+          previous =>
             previous.filter(
-              (item) =>
+              item =>
                 item.id !== id
             )
-        );
+        )
       },
       []
-    );
+    )
 
-  // --------------------------------------------------
-  // Clear
-  // --------------------------------------------------
+  // =========================================================
+  // CLEAR ALL
+  // =========================================================
 
   const clearAll =
     useCallback(() => {
       if (
         destinations.length === 0
       ) {
-        return;
+        return
       }
 
       if (
         !window.confirm(
-          "Clear all destinations?"
+          'Clear all destinations?'
         )
       ) {
-        return;
+        return
       }
 
-      setDestinations([]);
-    }, [destinations.length]);
+      setDestinations([])
+    }, [destinations.length])
 
-  // --------------------------------------------------
-  // Copy
-  // --------------------------------------------------
+  // =========================================================
+  // GENERATED CODE
+  // =========================================================
+
+  const generateCode = useCallback(() => {
+    const lines =
+      destinations.map(
+        destination => {
+          return `  {
+    id: '${destination.id}',
+    name: '${destination.name.replace(
+      /'/g,
+      "\\'"
+    )}',
+    position: new THREE.Vector3(
+      ${destination.position.x},
+      ${destination.position.y},
+      ${destination.position.z}
+    ),
+  }`
+        }
+      )
+
+    if (
+      lines.length === 0
+    ) {
+      return `const DESTINATIONS: Destination[] = [];`
+    }
+
+    return `const DESTINATIONS: Destination[] = [
+
+${lines.join(',\n\n')}
+
+];`
+  }, [destinations])
+
+  // =========================================================
+  // COPY CODE
+  // =========================================================
 
   const copyCode =
     useCallback(async () => {
+      const code =
+        generateCode()
+
       try {
         await navigator.clipboard.writeText(
-          generatedCode
-        );
+          code
+        )
 
         alert(
-          "DESTINATIONS code copied."
-        );
-      } catch (error) {
+          'Destination code copied.'
+        )
+      } catch (err) {
         console.error(
-          "Copy failed:",
-          error
-        );
+          'Copy failed:',
+          err
+        )
 
         alert(
-          "Copy failed. Please copy manually."
-        );
+          'Copy failed. Please copy manually.'
+        )
       }
-    }, [generatedCode]);
+    }, [generateCode])
 
-  // ==================================================
-  // MULTISET + THREE INITIALIZATION
-  // ==================================================
+  // =========================================================
+  // MULTISET INITIALIZATION
+  // =========================================================
 
   useEffect(() => {
-    let disposed = false;
-
-    const initialize =
-      async () => {
-        try {
-          if (!containerRef.current) {
-            return;
-          }
-
-          // ------------------------------------------
-          // Check environment
-          // ------------------------------------------
-
-          if (
-            !CLIENT_ID ||
-            !CLIENT_SECRET ||
-            !MAP_CODE
-          ) {
-            console.error(
-              "Missing MultiSet environment variables."
-            );
-
-            setStatus(
-              "Missing MultiSet configuration"
-            );
-
-            return;
-          }
-
-          setStatus(
-            "Creating AR scene..."
-          );
-
-          // ------------------------------------------
-          // Renderer
-          // ------------------------------------------
-
-          const renderer =
-            new THREE.WebGLRenderer({
-              antialias: true,
-              alpha: true,
-            });
-
-          renderer.setPixelRatio(
-            window.devicePixelRatio
-          );
-
-          renderer.setSize(
-            window.innerWidth,
-            window.innerHeight
-          );
-
-          /**
-           * VERY IMPORTANT
-           *
-           * Required for WebXR.
-           */
-          renderer.xr.enabled = true;
-
-          renderer.domElement.style.position =
-            "fixed";
-
-          renderer.domElement.style.left =
-            "0";
-
-          renderer.domElement.style.top =
-            "0";
-
-          renderer.domElement.style.width =
-            "100%";
-
-          renderer.domElement.style.height =
-            "100%";
-
-          renderer.domElement.style.zIndex =
-            "0";
-
-          renderer.domElement.style.display =
-            "block";
-
-          containerRef.current.appendChild(
-            renderer.domElement
-          );
-
-          rendererRef.current =
-            renderer;
-
-          // ------------------------------------------
-          // Scene
-          // ------------------------------------------
-
-          const scene =
-            new THREE.Scene();
-
-          /**
-           * VERY IMPORTANT
-           *
-           * Transparent background allows
-           * the real AR camera feed to show.
-           */
-          scene.background = null;
-
-          sceneRef.current =
-            scene;
-
-          // ------------------------------------------
-          // Camera
-          // ------------------------------------------
-
-          const camera =
-            new THREE.PerspectiveCamera(
-              70,
-              window.innerWidth /
-                window.innerHeight,
-              0.01,
-              100
-            );
-
-          camera.position.set(
-            0,
-            0,
-            0
-          );
-
-          scene.add(camera);
-
-          cameraRef.current =
-            camera;
-
-          // ------------------------------------------
-          // Light
-          // ------------------------------------------
-
-          scene.add(
-            new THREE.AmbientLight(
-              0xffffff,
-              1
-            )
-          );
-
-          // ------------------------------------------
-          // MultiSet client
-          // ------------------------------------------
-
-          setStatus(
-            "Authorizing MultiSet..."
-          );
-
-          const client =
-            new MultisetClient({
-              clientId: CLIENT_ID,
-              clientSecret: CLIENT_SECRET,
-
-              mapType: "map",
-
-              code: MAP_CODE,
-            });
-
-          await client.authorize();
-
-          if (disposed) {
-            return;
-          }
-
-          console.log(
-            "MultiSet authorized"
-          );
-
-          // ------------------------------------------
-          // XR Session
-          // ------------------------------------------
-
-          setStatus(
-            "Creating XR session..."
-          );
-
-          /**
-           * Keep this configuration minimal.
-           *
-           * These are the documented options.
-           */
-          const session =
-            new XRSessionManager(
-              renderer.getContext() as WebGL2RenderingContext,
-              {
-                client,
-
-                autoLocalize: true,
-
-                onLocalizationFailure:
-                  (reason) => {
-                    console.warn(
-                      "Localization failed:",
-                      reason
-                    );
-
-                    setLocalized(false);
-
-                    setStatus(
-                      "Localization failed — move camera around"
-                    );
-                  },
-
-                onError:
-                  (error) => {
-                    console.error(
-                      "MultiSet session error:",
-                      error
-                    );
-
-                    setStatus(
-                      "MultiSet session error"
-                    );
-                  },
-              }
-            );
-
-          sessionRef.current =
-            session;
-
-          // ------------------------------------------
-          // ThreeAdapter
-          // ------------------------------------------
-
-          const adapter =
-            new ThreeAdapter({
-              session,
-
-              renderer,
-
-              scene,
-
-              camera,
-
-              /**
-               * We don't need map mesh for
-               * destination capture.
-               */
-              showMesh: false,
-
-              showGizmo: false,
-
-              /**
-               * Let MultiSet create the
-               * official START AR button.
-               */
-              useDefaultButton: true,
-
-              // --------------------------------------
-              // Localization success
-              // --------------------------------------
-
-              onLocalizationSuccess:
-                (
-                  result,
-                  worldFromMap
-                ) => {
-                  if (disposed) {
-                    return;
-                  }
-
-                  console.log(
-                    "================================"
-                  );
-
-                  console.log(
-                    "MULTISET LOCALIZED"
-                  );
-
-                  console.log(
-                    "Result:",
-                    result
-                  );
-
-                  console.log(
-                    "worldFromMap:",
-                    worldFromMap
-                  );
-
-                  console.log(
-                    "================================"
-                  );
-
-                  /**
-                   * Save MAP -> WORLD matrix.
-                   */
-                  worldFromMapRef.current =
-                    worldFromMap.clone();
-
-                  setLocalized(true);
-
-                  setStatus(
-                    "Localized — walk to destination"
-                  );
-                },
-
-              // --------------------------------------
-              // XR frame
-              // --------------------------------------
-
-              onXRFrame:
-                ({
-                  deltaSeconds,
-                }) => {
-                  if (disposed) {
-                    return;
-                  }
-
-                  if (
-                    !worldFromMapRef.current
-                  ) {
-                    return;
-                  }
-
-                  /**
-                   * Camera world position.
-                   */
-                  const worldPosition =
-                    new THREE.Vector3();
-
-                  camera.getWorldPosition(
-                    worldPosition
-                  );
-
-                  /**
-                   * MultiSet gives:
-                   *
-                   * MAP -> WORLD
-                   *
-                   * We need:
-                   *
-                   * WORLD -> MAP
-                   */
-                  const mapFromWorld =
-                    worldFromMapRef.current
-                      .clone()
-                      .invert();
-
-                  /**
-                   * Convert camera world
-                   * position into map coordinates.
-                   */
-                  const mapPosition =
-                    worldPosition
-                      .clone()
-                      .applyMatrix4(
-                        mapFromWorld
-                      );
-
-                  currentMapPositionRef.current =
-                    mapPosition;
-
-                  /**
-                   * Don't update React state
-                   * every frame.
-                   */
-                  const now =
-                    performance.now();
-
-                  if (
-                    now -
-                      lastUiUpdateRef.current <
-                    100
-                  ) {
-                    return;
-                  }
-
-                  lastUiUpdateRef.current =
-                    now;
-
-                  setCurrentPosition({
-                    x: Number(
-                      mapPosition.x.toFixed(3)
-                    ),
-
-                    y: Number(
-                      mapPosition.y.toFixed(3)
-                    ),
-
-                    z: Number(
-                      mapPosition.z.toFixed(3)
-                    ),
-                  });
-                },
-            });
-
-          adapterRef.current =
-            adapter;
-
-          // ------------------------------------------
-          // Initialize adapter
-          // ------------------------------------------
-
-          /**
-           * IMPORTANT:
-           *
-           * Do NOT await this.
-           *
-           * MultiSet initializes its preview
-           * and AR button here.
-           */
-          adapter.initialize();
-
-          if (disposed) {
-            return;
-          }
-
-          setStatus(
-            "Ready — press START AR"
-          );
-
-          console.log(
-            "MultiSet adapter initialized"
-          );
-
-          // ------------------------------------------
-          // Resize
-          // ------------------------------------------
-
-          const handleResize =
-            () => {
-              const width =
-                window.innerWidth;
-
-              const height =
-                window.innerHeight;
-
-              camera.aspect =
-                width / height;
-
-              camera.updateProjectionMatrix();
-
-              renderer.setSize(
-                width,
-                height
-              );
-            };
-
-          window.addEventListener(
-            "resize",
-            handleResize
-          );
-
-          // Save cleanup function
-          (
-            renderer as THREE.WebGLRenderer & {
-              __captureCleanup?: () => void;
-            }
-          ).__captureCleanup =
-            () => {
-              window.removeEventListener(
-                "resize",
-                handleResize
-              );
-            };
-        } catch (error) {
-          console.error(
-            "================================"
-          );
-
-          console.error(
-            "DESTINATION CAPTURE ERROR"
-          );
-
-          console.error(
-            error
-          );
-
-          console.error(
-            "================================"
-          );
-
-          setStatus(
-            error instanceof Error
-              ? error.message
-              : "Initialization failed"
-          );
-        }
-      };
-
-    void initialize();
-
-    // ----------------------------------------------
-    // Cleanup
-    // ----------------------------------------------
-
-    return () => {
-      disposed = true;
-
-      worldFromMapRef.current =
-        null;
-
-      currentMapPositionRef.current =
-        null;
-
-      // Adapter handles XR cleanup.
-      if (adapterRef.current) {
-        adapterRef.current.dispose();
-      }
-
-      adapterRef.current =
-        null;
-
-      sessionRef.current =
-        null;
-
-      const renderer =
-        rendererRef.current;
-
-      if (renderer) {
-        (
-          renderer as THREE.WebGLRenderer & {
-            __captureCleanup?: () => void;
-          }
-        ).__captureCleanup?.();
-
-        renderer.dispose();
+    let disposed = false
+
+    let resizeHandler:
+      | (() => void)
+      | null = null
+
+    let animationFrameId:
+      | number
+      | null = null
+
+    const init = async () => {
+      try {
+        // -----------------------------------------------------
+        // 1. CHECK CONTAINER
+        // -----------------------------------------------------
 
         if (
-          renderer.domElement.parentElement
+          !containerRef.current
         ) {
-          renderer.domElement.parentElement.removeChild(
-            renderer.domElement
-          );
+          return
         }
+
+        // -----------------------------------------------------
+        // 2. CHECK WEBXR
+        // -----------------------------------------------------
+
+        setStatus(
+          'Checking WebXR...'
+        )
+
+        const supported =
+          await ThreeAdapter.isSupported()
+
+        if (!supported) {
+          throw new Error(
+            'WebXR immersive AR is not supported on this device/browser.'
+          )
+        }
+
+        // -----------------------------------------------------
+        // 3. ENVIRONMENT
+        // -----------------------------------------------------
+
+        const clientId =
+          process.env
+            .NEXT_PUBLIC_MULTISET_CLIENT_ID
+
+        const clientSecret =
+          process.env
+            .NEXT_PUBLIC_MULTISET_CLIENT_SECRET
+
+        const mapCode =
+          process.env
+            .NEXT_PUBLIC_MULTISET_MAP_CODE
+
+        if (
+          !clientId ||
+          !clientSecret ||
+          !mapCode
+        ) {
+          throw new Error(
+            'Missing MultiSet environment variables.'
+          )
+        }
+
+        console.log(
+          '[Destination Capture] Map:',
+          mapCode
+        )
+
+        // -----------------------------------------------------
+        // 4. MULTISET CLIENT
+        // -----------------------------------------------------
+
+        setStatus(
+          'Authorizing MultiSet...'
+        )
+
+        const client =
+          new MultisetClient({
+            clientId,
+
+            clientSecret,
+
+            mapType: 'map',
+
+            code: mapCode,
+          })
+
+        await client.authorize()
+
+        if (disposed) {
+          return
+        }
+
+        console.log(
+          '[Destination Capture] MultiSet authorized'
+        )
+
+        // -----------------------------------------------------
+        // 5. THREE RENDERER
+        // -----------------------------------------------------
+
+        setStatus(
+          'Creating AR renderer...'
+        )
+
+        const renderer =
+          new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true,
+          })
+
+        renderer.setPixelRatio(
+          Math.min(
+            window.devicePixelRatio,
+            2
+          )
+        )
+
+        renderer.setSize(
+          window.innerWidth,
+          window.innerHeight
+        )
+
+        // IMPORTANT
+        renderer.xr.enabled = true
+
+        // IMPORTANT
+        renderer.setClearColor(
+          0x000000,
+          0
+        )
+
+        renderer.domElement.style.position =
+          'fixed'
+
+        renderer.domElement.style.left =
+          '0'
+
+        renderer.domElement.style.top =
+          '0'
+
+        renderer.domElement.style.width =
+          '100%'
+
+        renderer.domElement.style.height =
+          '100%'
+
+        renderer.domElement.style.zIndex =
+          '0'
+
+        containerRef.current.appendChild(
+          renderer.domElement
+        )
+
+        rendererRef.current =
+          renderer
+
+        // -----------------------------------------------------
+        // 6. SCENE
+        // -----------------------------------------------------
+
+        const scene =
+          new THREE.Scene()
+
+        // IMPORTANT
+        scene.background = null
+
+        sceneRef.current =
+          scene
+
+        // -----------------------------------------------------
+        // 7. CAMERA
+        // -----------------------------------------------------
+
+        const camera =
+          new THREE.PerspectiveCamera(
+            70,
+
+            window.innerWidth /
+              window.innerHeight,
+
+            0.01,
+
+            1000
+          )
+
+        camera.position.set(
+          0,
+          0,
+          0
+        )
+
+        scene.add(camera)
+
+        cameraRef.current =
+          camera
+
+        // -----------------------------------------------------
+        // 8. XR SESSION
+        // -----------------------------------------------------
+
+        setStatus(
+          'Creating XR session...'
+        )
+
+        const session =
+          new XRSessionManager(
+            renderer.getContext() as WebGL2RenderingContext,
+            {
+              client,
+
+              autoLocalize: true,
+
+              referenceSpaceType:
+                'local',
+
+              confidenceCheck:
+                true,
+
+              confidenceThreshold:
+                0.5,
+
+              onSessionStart: () => {
+                console.log(
+                  '[Destination Capture] XR SESSION STARTED'
+                )
+
+                setStatus(
+                  'AR session started'
+                )
+              },
+
+              onSessionEnd: () => {
+                console.log(
+                  '[Destination Capture] XR SESSION ENDED'
+                )
+
+                setStatus(
+                  'AR session ended'
+                )
+              },
+
+              onLocalizationInit:
+                () => {
+                  console.log(
+                    '[Destination Capture] Localization started'
+                  )
+
+                  setStatus(
+                    'Scanning... move phone slowly'
+                  )
+                },
+
+              onLocalizationResult:
+                (result: any) => {
+                  console.log(
+                    '[Destination Capture] Localization result:',
+                    result
+                  )
+                },
+
+              onLocalizationFailure:
+                (reason: any) => {
+                  console.error(
+                    '[Destination Capture] Localization failed:',
+                    reason
+                  )
+
+                  setLocalized(false)
+
+                  setStatus(
+                    'Localization failed'
+                  )
+                },
+
+              onError:
+                (error: any) => {
+                  console.error(
+                    '[Destination Capture] XR ERROR:',
+                    error
+                  )
+
+                  setError(
+                    error?.message ||
+                      String(error)
+                  )
+                },
+            }
+          )
+
+        // -----------------------------------------------------
+        // 9. THREE ADAPTER
+        // -----------------------------------------------------
+
+        setStatus(
+          'Creating ThreeAdapter...'
+        )
+
+        const adapter =
+          new ThreeAdapter({
+            session,
+
+            renderer,
+
+            scene,
+
+            camera,
+
+            showMesh: false,
+
+            showGizmo: false,
+
+            useDefaultButton: true,
+
+            onLocalizationSuccess:
+              (
+                result: any,
+                worldFromMap: THREE.Matrix4
+              ) => {
+                if (disposed) {
+                  return
+                }
+
+                console.log(
+                  '================================'
+                )
+
+                console.log(
+                  '[Destination Capture] LOCALIZED'
+                )
+
+                console.log(
+                  '[Destination Capture] Confidence:',
+                  result?.localizeData
+                    ?.confidence
+                )
+
+                console.log(
+                  '[Destination Capture] worldFromMap:',
+                  worldFromMap
+                )
+
+                console.log(
+                  '================================'
+                )
+
+                // -------------------------------------------------
+                // SAVE MAP -> WORLD TRANSFORM
+                // -------------------------------------------------
+
+                worldFromMapRef.current =
+                  worldFromMap.clone()
+
+                setLocalized(true)
+
+                setStatus(
+                  'Localized successfully!'
+                )
+              },
+
+            onXRFrame:
+              () => {
+                if (
+                  disposed ||
+                  !camera
+                ) {
+                  return
+                }
+
+                // -----------------------------------------------
+                // We need localization first.
+                // -----------------------------------------------
+
+                if (
+                  !worldFromMapRef.current
+                ) {
+                  return
+                }
+
+                // -----------------------------------------------
+                // Camera WORLD position
+                // -----------------------------------------------
+
+                const worldPosition =
+                  new THREE.Vector3()
+
+                camera.getWorldPosition(
+                  worldPosition
+                )
+
+                // -----------------------------------------------
+                // WORLD -> MAP
+                // -----------------------------------------------
+
+                const mapFromWorld =
+                  worldFromMapRef.current
+                    .clone()
+                    .invert()
+
+                const mapPosition =
+                  worldPosition
+                    .clone()
+                    .applyMatrix4(
+                      mapFromWorld
+                    )
+
+                // -----------------------------------------------
+                // SAVE
+                // -----------------------------------------------
+
+                currentMapPositionRef.current =
+                  mapPosition
+
+                // -----------------------------------------------
+                // Don't update React every
+                // XR frame.
+                // -----------------------------------------------
+
+                const now =
+                  performance.now()
+
+                if (
+                  now -
+                    lastPositionUpdateRef.current <
+                  100
+                ) {
+                  return
+                }
+
+                lastPositionUpdateRef.current =
+                  now
+
+                setCurrentPosition({
+                  x: Number(
+                    mapPosition.x.toFixed(
+                      3
+                    )
+                  ),
+
+                  y: Number(
+                    mapPosition.y.toFixed(
+                      3
+                    )
+                  ),
+
+                  z: Number(
+                    mapPosition.z.toFixed(
+                      3
+                    )
+                  ),
+                })
+              },
+          })
+
+        adapterRef.current =
+          adapter
+
+        // -----------------------------------------------------
+        // 10. MAP SPACE
+        // -----------------------------------------------------
+
+        /**
+         * We DO NOT need Navigation here.
+         *
+         * MapSpace is enough to keep the
+         * map coordinate system connected
+         * to MultiSet.
+         */
+
+        const mapSpace =
+          new MapSpace(
+            new THREE.Object3D()
+          )
+
+        mapSpaceRef.current =
+          mapSpace
+
+        scene.add(
+          mapSpace.object
+        )
+
+        mapSpace.connect(
+          adapter
+        )
+
+        console.log(
+          '[Destination Capture] MapSpace connected'
+        )
+
+        // -----------------------------------------------------
+        // 11. INITIALIZE ADAPTER
+        // -----------------------------------------------------
+
+        setStatus(
+          'Initializing AR...'
+        )
+
+        /**
+         * IMPORTANT:
+         *
+         * Same initialization style
+         * as your working Kokarya page.
+         */
+        await adapter.initialize()
+
+        if (disposed) {
+          return
+        }
+
+        setStatus(
+          'Ready — tap START AR'
+        )
+
+        console.log(
+          '[Destination Capture] Ready'
+        )
+
+        // -----------------------------------------------------
+        // 12. RESIZE
+        // -----------------------------------------------------
+
+        resizeHandler =
+          () => {
+            if (
+              !renderer ||
+              !camera
+            ) {
+              return
+            }
+
+            camera.aspect =
+              window.innerWidth /
+              window.innerHeight
+
+            camera.updateProjectionMatrix()
+
+            renderer.setSize(
+              window.innerWidth,
+              window.innerHeight
+            )
+          }
+
+        window.addEventListener(
+          'resize',
+          resizeHandler
+        )
+
+        // -----------------------------------------------------
+        // 13. SAFETY ANIMATION LOOP
+        // -----------------------------------------------------
+
+        const tick =
+          () => {
+            if (disposed) {
+              return
+            }
+
+            animationFrameId =
+              requestAnimationFrame(
+                tick
+              )
+          }
+
+        tick()
+      } catch (err) {
+        console.error(
+          '[Destination Capture] Initialization error:',
+          err
+        )
+
+        const message =
+          err instanceof Error
+            ? err.message
+            : String(err)
+
+        setError(message)
+
+        setStatus(
+          'Initialization failed'
+        )
+      }
+    }
+
+    init()
+
+    // =======================================================
+    // CLEANUP
+    // =======================================================
+
+    return () => {
+      disposed = true
+
+      if (
+        animationFrameId !== null
+      ) {
+        cancelAnimationFrame(
+          animationFrameId
+        )
       }
 
+      if (resizeHandler) {
+        window.removeEventListener(
+          'resize',
+          resizeHandler
+        )
+      }
+
+      try {
+        adapterRef.current?.dispose()
+      } catch {}
+
+      try {
+        mapSpaceRef.current?.dispose()
+      } catch {}
+
+      if (
+        rendererRef.current &&
+        rendererRef.current
+          .domElement
+          .parentElement
+      ) {
+        rendererRef.current
+          .domElement
+          .parentElement
+          .removeChild(
+            rendererRef.current
+              .domElement
+          )
+      }
+
+      try {
+        rendererRef.current?.dispose()
+      } catch {}
+
       rendererRef.current =
-        null;
+        null
 
       sceneRef.current =
-        null;
+        null
 
       cameraRef.current =
-        null;
-    };
-  }, []);
+        null
 
-  // ==================================================
+      adapterRef.current =
+        null
+
+      mapSpaceRef.current =
+        null
+
+      worldFromMapRef.current =
+        null
+
+      currentMapPositionRef.current =
+        null
+    }
+  }, [])
+
+  // =========================================================
   // UI
-  // ==================================================
+  // =========================================================
 
   return (
     <main
       style={{
-        position: "fixed",
+        position: 'fixed',
         inset: 0,
-        overflow: "hidden",
-        background: "#000",
+        overflow: 'hidden',
+        background: '#000',
         fontFamily:
-          "Arial, sans-serif",
+          'Arial, sans-serif',
       }}
     >
-      {/* ============================================
-          THREE / CAMERA
-      ============================================= */}
+      {/* =====================================================
+          THREE / AR CAMERA
+      ====================================================== */}
 
       <div
         ref={containerRef}
         style={{
-          position: "absolute",
+          position: 'absolute',
           inset: 0,
           zIndex: 0,
         }}
       />
 
-      {/* ============================================
-          UI
-      ============================================= */}
+      {/* =====================================================
+          TOP STATUS
+      ====================================================== */}
 
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 10,
-          pointerEvents: "none",
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          right: 16,
+
+          zIndex: 20,
+
+          padding: 16,
+
+          borderRadius: 16,
+
+          background:
+            'rgba(0,0,0,0.72)',
+
+          color: '#fff',
+
+          backdropFilter:
+            'blur(15px)',
+
+          pointerEvents:
+            'none',
         }}
       >
-        {/* ------------------------------------------
-            Header
-        ------------------------------------------- */}
+        <div
+          style={{
+            fontSize: 20,
+            fontWeight: 700,
+            marginBottom: 8,
+          }}
+        >
+          Destination Capture
+        </div>
 
         <div
           style={{
-            position: "absolute",
+            fontSize: 13,
+            color: '#ccc',
+          }}
+        >
+          {status}
+        </div>
 
-            top: 20,
-            left: 20,
-            right: 20,
+        {error && (
+          <div
+            style={{
+              marginTop: 10,
+              color: '#ff7777',
+              fontSize: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
 
-            padding: 18,
+      {/* =====================================================
+          BOTTOM PANEL
+      ====================================================== */}
 
-            borderRadius: 18,
+      <div
+        style={{
+          position: 'absolute',
 
-            background:
-              "rgba(15,15,18,0.9)",
+          left: 16,
+          right: 16,
+          bottom: 16,
 
-            backdropFilter:
-              "blur(18px)",
+          zIndex: 20,
 
-            color: "#fff",
+          maxHeight:
+            '55vh',
 
-            pointerEvents: "auto",
+          overflowY: 'auto',
+
+          padding: 16,
+
+          borderRadius: 18,
+
+          background:
+            'rgba(0,0,0,0.84)',
+
+          backdropFilter:
+            'blur(18px)',
+
+          color: '#fff',
+        }}
+      >
+        {/* ---------------------------------------------------
+            LOCALIZATION
+        ---------------------------------------------------- */}
+
+        <div
+          style={{
+            marginBottom: 14,
           }}
         >
           <div
             style={{
-              fontSize: 21,
-              fontWeight: 700,
-              marginBottom: 7,
+              fontSize: 11,
+              color: '#888',
+              letterSpacing: 1,
+              marginBottom: 6,
             }}
           >
-            Destination Capture
-          </div>
-
-          <div
-            style={{
-              color: "#aaa",
-              fontSize: 13,
-              marginBottom: 10,
-            }}
-          >
-            {status}
+            MULTISET
           </div>
 
           <div
             style={{
               color: localized
-                ? "#4ade80"
-                : "#888",
-              fontSize: 13,
+                ? '#4ade80'
+                : '#aaa',
+
+              fontSize: 14,
+
+              fontWeight: 600,
             }}
           >
-            ●{" "}
             {localized
-              ? "Localized"
-              : "Waiting for localization"}
+              ? '● Localized'
+              : '○ Waiting for localization'}
           </div>
         </div>
 
-        {/* ------------------------------------------
-            Bottom panel
-        ------------------------------------------- */}
+        {/* ---------------------------------------------------
+            CURRENT POSITION
+        ---------------------------------------------------- */}
 
         <div
           style={{
-            position: "absolute",
-
-            left: 20,
-            right: 20,
-            bottom: 20,
-
-            maxHeight:
-              "calc(100vh - 150px)",
-
-            overflowY: "auto",
-
-            padding: 18,
-
-            borderRadius: 20,
-
-            background:
-              "rgba(15,15,18,0.94)",
-
-            backdropFilter:
-              "blur(20px)",
-
-            color: "#fff",
-
-            pointerEvents: "auto",
+            marginBottom: 16,
           }}
         >
-          {/* Current position */}
-
           <div
             style={{
-              marginBottom: 16,
+              fontSize: 11,
+              color: '#888',
+              letterSpacing: 1,
+              marginBottom: 7,
             }}
           >
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: 1,
-                color: "#777",
-                marginBottom: 8,
-              }}
-            >
-              CURRENT MAP POSITION
-            </div>
-
-            {currentPosition ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 18,
-                  fontFamily:
-                    "monospace",
-                  fontSize: 14,
-                }}
-              >
-                <span>
-                  X: {currentPosition.x}
-                </span>
-
-                <span>
-                  Y: {currentPosition.y}
-                </span>
-
-                <span>
-                  Z: {currentPosition.z}
-                </span>
-              </div>
-            ) : (
-              <div
-                style={{
-                  color: "#777",
-                  fontSize: 13,
-                }}
-              >
-                Start AR and localize first.
-              </div>
-            )}
+            CURRENT MAP COORDINATES
           </div>
 
-          {/* Input */}
-
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              marginBottom: 15,
-            }}
-          >
-            <input
-              value={destinationName}
-              onChange={(event) =>
-                setDestinationName(
-                  event.target.value
-                )
-              }
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Enter"
-                ) {
-                  captureDestination();
+          {currentPosition ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns:
+                  'repeat(3, 1fr)',
+                gap: 8,
+              }}
+            >
+              <Coordinate
+                label="X"
+                value={
+                  currentPosition.x
                 }
-              }}
-              placeholder="Destination name"
-              disabled={!localized}
-              style={{
-                flex: 1,
-                minWidth: 0,
+              />
 
-                padding:
-                  "13px 14px",
+              <Coordinate
+                label="Y"
+                value={
+                  currentPosition.y
+                }
+              />
 
-                border:
-                  "1px solid #444",
-
-                borderRadius: 11,
-
-                background: "#111",
-
-                color: "#fff",
-
-                outline: "none",
-
-                fontSize: 14,
-              }}
-            />
-
-            <button
-              type="button"
-              onClick={
-                captureDestination
-              }
-              disabled={!localized}
-              style={{
-                border: "none",
-
-                borderRadius: 11,
-
-                padding:
-                  "13px 16px",
-
-                background:
-                  localized
-                    ? "#00bfff"
-                    : "#444",
-
-                color: "#fff",
-
-                fontWeight: 700,
-
-                cursor:
-                  localized
-                    ? "pointer"
-                    : "not-allowed",
-
-                whiteSpace:
-                  "nowrap",
-              }}
-            >
-              Capture
-            </button>
-          </div>
-
-          {/* Destination count */}
-
-          {destinations.length > 0 && (
+              <Coordinate
+                label="Z"
+                value={
+                  currentPosition.z
+                }
+              />
+            </div>
+          ) : (
             <div
               style={{
-                display: "flex",
+                padding: 12,
+                borderRadius: 10,
+                background: '#111',
+                color: '#777',
+                fontSize: 12,
+              }}
+            >
+              Start AR and localize
+              first.
+            </div>
+          )}
+        </div>
+
+        {/* ---------------------------------------------------
+            DESTINATION INPUT
+        ---------------------------------------------------- */}
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            marginBottom: 16,
+          }}
+        >
+          <input
+            type="text"
+            value={
+              destinationName
+            }
+            onChange={event =>
+              setDestinationName(
+                event.target.value
+              )
+            }
+            onKeyDown={event => {
+              if (
+                event.key ===
+                'Enter'
+              ) {
+                captureDestination()
+              }
+            }}
+            placeholder="Enter destination name"
+            disabled={!localized}
+            style={{
+              flex: 1,
+
+              minWidth: 0,
+
+              padding:
+                '13px 14px',
+
+              border:
+                '1px solid #444',
+
+              borderRadius: 10,
+
+              background: '#111',
+
+              color: '#fff',
+
+              outline: 'none',
+
+              fontSize: 14,
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={
+              captureDestination
+            }
+            disabled={!localized}
+            style={{
+              padding:
+                '13px 16px',
+
+              border: 0,
+
+              borderRadius: 10,
+
+              background:
+                localized
+                  ? '#00bfff'
+                  : '#444',
+
+              color: '#fff',
+
+              fontWeight: 700,
+
+              cursor:
+                localized
+                  ? 'pointer'
+                  : 'not-allowed',
+
+              whiteSpace:
+                'nowrap',
+            }}
+          >
+            Capture
+          </button>
+        </div>
+
+        {/* ---------------------------------------------------
+            DESTINATIONS
+        ---------------------------------------------------- */}
+
+        {destinations.length >
+          0 && (
+          <>
+            <div
+              style={{
+                display: 'flex',
                 justifyContent:
-                  "space-between",
+                  'space-between',
                 alignItems:
-                  "center",
+                  'center',
                 marginBottom: 8,
               }}
             >
-              <strong
+              <div
                 style={{
                   fontSize: 14,
+                  fontWeight: 700,
                 }}
               >
                 Destinations (
-                {destinations.length})
-              </strong>
+                {
+                  destinations.length
+                }
+                )
+              </div>
 
               <button
                 type="button"
-                onClick={clearAll}
+                onClick={
+                  clearAll
+                }
                 style={{
                   border:
-                    "1px solid #444",
+                    '1px solid #444',
+
+                  background:
+                    'transparent',
+
+                  color: '#aaa',
 
                   borderRadius: 8,
 
                   padding:
-                    "6px 10px",
+                    '6px 10px',
 
-                  background:
-                    "transparent",
-
-                  color: "#aaa",
-
-                  cursor: "pointer",
+                  cursor:
+                    'pointer',
                 }}
               >
                 Clear
               </button>
             </div>
-          )}
 
-          {/* Destination list */}
-
-          {destinations.map(
-            (destination) => (
-              <div
-                key={destination.id}
-                style={{
-                  display: "flex",
-
-                  justifyContent:
-                    "space-between",
-
-                  alignItems:
-                    "center",
-
-                  gap: 10,
-
-                  padding:
-                    "10px 12px",
-
-                  marginBottom: 6,
-
-                  borderRadius: 10,
-
-                  background: "#111",
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      fontSize: 14,
-                    }}
-                  >
-                    {destination.name}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: 4,
-
-                      color: "#888",
-
-                      fontFamily:
-                        "monospace",
-
-                      fontSize: 11,
-                    }}
-                  >
-                    X{" "}
-                    {destination.position.x}
-                    {"   "}
-                    Y{" "}
-                    {destination.position.y}
-                    {"   "}
-                    Z{" "}
-                    {destination.position.z}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    deleteDestination(
-                      destination.id
-                    )
+            {destinations.map(
+              destination => (
+                <div
+                  key={
+                    destination.id
                   }
                   style={{
-                    border: "none",
+                    display: 'flex',
+
+                    justifyContent:
+                      'space-between',
+
+                    alignItems:
+                      'center',
+
+                    gap: 10,
+
+                    padding:
+                      '10px 12px',
+
+                    marginBottom: 6,
 
                     background:
-                      "transparent",
+                      '#111',
 
-                    color:
-                      "#ff7070",
-
-                    cursor:
-                      "pointer",
+                    borderRadius: 10,
                   }}
                 >
-                  Delete
-                </button>
-              </div>
-            )
-          )}
+                  <div>
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        fontSize: 14,
+                      }}
+                    >
+                      {
+                        destination.name
+                      }
+                    </div>
 
-          {/* Generated code */}
+                    <div
+                      style={{
+                        marginTop: 5,
 
-          {destinations.length > 0 && (
+                        fontFamily:
+                          'monospace',
+
+                        fontSize: 11,
+
+                        color: '#888',
+                      }}
+                    >
+                      X:{' '}
+                      {
+                        destination
+                          .position
+                          .x
+                      }{' '}
+                      Y:{' '}
+                      {
+                        destination
+                          .position
+                          .y
+                      }{' '}
+                      Z:{' '}
+                      {
+                        destination
+                          .position
+                          .z
+                      }
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      deleteDestination(
+                        destination.id
+                      )
+                    }
+                    style={{
+                      border: 0,
+
+                      background:
+                        'transparent',
+
+                      color:
+                        '#ff6b6b',
+
+                      cursor:
+                        'pointer',
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )
+            )}
+
+            {/* -------------------------------------------------
+                GENERATED CODE
+            -------------------------------------------------- */}
+
             <div
               style={{
                 marginTop: 16,
@@ -1298,44 +1453,48 @@ ${items}
             >
               <div
                 style={{
-                  display: "flex",
+                  display: 'flex',
                   justifyContent:
-                    "space-between",
+                    'space-between',
                   alignItems:
-                    "center",
+                    'center',
                   marginBottom: 8,
                 }}
               >
-                <strong
+                <div
                   style={{
                     fontSize: 14,
+                    fontWeight: 700,
                   }}
                 >
                   Generated Code
-                </strong>
+                </div>
 
                 <button
                   type="button"
-                  onClick={copyCode}
+                  onClick={
+                    copyCode
+                  }
                   style={{
-                    border: "none",
+                    border: 0,
 
-                    borderRadius: 9,
+                    borderRadius: 8,
 
                     padding:
-                      "8px 12px",
+                      '8px 12px',
 
                     background:
-                      "#00bfff",
+                      '#00bfff',
 
-                    color: "#fff",
+                    color: '#fff',
 
                     fontWeight: 700,
 
-                    cursor: "pointer",
+                    cursor:
+                      'pointer',
                   }}
                 >
-                  Copy Code
+                  Copy
                 </button>
               </div>
 
@@ -1345,30 +1504,85 @@ ${items}
 
                   padding: 14,
 
-                  borderRadius: 12,
-
                   background:
-                    "#050505",
+                    '#050505',
 
-                  color: "#9ff",
+                  borderRadius: 10,
 
-                  overflowX:
-                    "auto",
+                  color: '#9ff',
+
+                  fontFamily:
+                    'monospace',
 
                   fontSize: 11,
 
                   lineHeight: 1.55,
 
-                  fontFamily:
-                    "monospace",
+                  overflowX:
+                    'auto',
+
+                  whiteSpace:
+                    'pre',
                 }}
               >
-                {generatedCode}
+                {
+                  generateCode()
+                }
               </pre>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </main>
-  );
+  )
+}
+
+// =========================================================
+// COORDINATE COMPONENT
+// =========================================================
+
+function Coordinate({
+  label,
+  value,
+}: {
+  label: string
+  value: number
+}) {
+  return (
+    <div
+      style={{
+        padding: 12,
+
+        borderRadius: 10,
+
+        background: '#111',
+
+        border:
+          '1px solid #222',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          color: '#777',
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontFamily:
+            'monospace',
+
+          fontSize: 14,
+
+          fontWeight: 600,
+        }}
+      >
+        {value.toFixed(3)}
+      </div>
+    </div>
+  )
 }
