@@ -10,7 +10,7 @@ import {
 
 import { ThreeAdapter } from "@multisetai/vps/three";
 
-type CapturedDestination = {
+type Destination = {
   id: string;
   name: string;
   position: {
@@ -30,8 +30,16 @@ const CLIENT_SECRET =
   process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET ?? "";
 
 export default function DestinationCapturePage() {
+  // --------------------------------------------------
+  // DOM
+  // --------------------------------------------------
+
   const containerRef =
     useRef<HTMLDivElement | null>(null);
+
+  // --------------------------------------------------
+  // Three.js
+  // --------------------------------------------------
 
   const rendererRef =
     useRef<THREE.WebGLRenderer | null>(null);
@@ -42,6 +50,10 @@ export default function DestinationCapturePage() {
   const cameraRef =
     useRef<THREE.PerspectiveCamera | null>(null);
 
+  // --------------------------------------------------
+  // MultiSet
+  // --------------------------------------------------
+
   const adapterRef =
     useRef<ThreeAdapter | null>(null);
 
@@ -49,20 +61,28 @@ export default function DestinationCapturePage() {
     useRef<XRSessionManager | null>(null);
 
   /**
-   * MultiSet gives us this matrix after localization.
+   * MultiSet:
    *
-   * map -> world
+   * map coordinates -> world coordinates
    */
   const worldFromMapRef =
     useRef<THREE.Matrix4 | null>(null);
 
   /**
-   * Current device position in MAP coordinates.
-   *
-   * Updated every XR frame.
+   * Latest camera position in MAP coordinates.
    */
   const currentMapPositionRef =
     useRef<THREE.Vector3 | null>(null);
+
+  /**
+   * Avoid React state updates on every XR frame.
+   */
+  const lastUiUpdateRef =
+    useRef(0);
+
+  // --------------------------------------------------
+  // UI state
+  // --------------------------------------------------
 
   const [status, setStatus] =
     useState("Initializing...");
@@ -80,13 +100,11 @@ export default function DestinationCapturePage() {
       z: number;
     } | null>(null);
 
-  const [
-    destinations,
-    setDestinations,
-  ] = useState<CapturedDestination[]>([]);
+  const [destinations, setDestinations] =
+    useState<Destination[]>([]);
 
   // --------------------------------------------------
-  // Create safe ID
+  // Create destination ID
   // --------------------------------------------------
 
   const createId = useCallback(
@@ -101,7 +119,7 @@ export default function DestinationCapturePage() {
   );
 
   // --------------------------------------------------
-  // Generated TypeScript code
+  // Generate DESTINATIONS code
   // --------------------------------------------------
 
   const generatedCode = useMemo(() => {
@@ -153,11 +171,9 @@ ${items}
         x: Number(
           position.x.toFixed(3)
         ),
-
         y: Number(
           position.y.toFixed(3)
         ),
-
         z: Number(
           position.z.toFixed(3)
         ),
@@ -165,102 +181,101 @@ ${items}
     }, []);
 
   // --------------------------------------------------
-  // Capture destination
+  // Capture
   // --------------------------------------------------
 
-  const captureDestination = useCallback(() => {
-    if (!localized) {
-      alert(
-        "Please wait until MultiSet is localized."
-      );
+  const captureDestination =
+    useCallback(() => {
+      if (!localized) {
+        alert(
+          "Please wait until MultiSet is localized."
+        );
 
-      return;
-    }
-
-    const name =
-      destinationName.trim();
-
-    if (!name) {
-      alert(
-        "Enter a destination name."
-      );
-
-      return;
-    }
-
-    const position =
-      getCurrentMapPosition();
-
-    if (!position) {
-      alert(
-        "Current map position is not available yet."
-      );
-
-      return;
-    }
-
-    const id =
-      createId(name);
-
-    if (!id) {
-      alert(
-        "Please enter a valid destination name."
-      );
-
-      return;
-    }
-
-    const destination: CapturedDestination = {
-      id,
-      name,
-      position,
-    };
-
-    setDestinations(
-      (previous) => {
-        const existingIndex =
-          previous.findIndex(
-            (item) =>
-              item.id === id
-          );
-
-        /**
-         * If destination already exists,
-         * replace its coordinates.
-         */
-        if (existingIndex !== -1) {
-          const updated = [
-            ...previous,
-          ];
-
-          updated[existingIndex] =
-            destination;
-
-          return updated;
-        }
-
-        return [
-          ...previous,
-          destination,
-        ];
+        return;
       }
-    );
 
-    setDestinationName("");
+      const name =
+        destinationName.trim();
 
-    console.log(
-      "[Destination Capture]",
-      destination
-    );
-  }, [
-    localized,
-    destinationName,
-    getCurrentMapPosition,
-    createId,
-  ]);
+      if (!name) {
+        alert(
+          "Enter destination name."
+        );
+
+        return;
+      }
+
+      const position =
+        getCurrentMapPosition();
+
+      if (!position) {
+        alert(
+          "Current map position is not available."
+        );
+
+        return;
+      }
+
+      const id =
+        createId(name);
+
+      if (!id) {
+        alert(
+          "Invalid destination name."
+        );
+
+        return;
+      }
+
+      const destination: Destination = {
+        id,
+        name,
+        position,
+      };
+
+      setDestinations(
+        (previous) => {
+          const existingIndex =
+            previous.findIndex(
+              (item) =>
+                item.id === id
+            );
+
+          // Update existing destination
+          if (existingIndex !== -1) {
+            const updated = [
+              ...previous,
+            ];
+
+            updated[existingIndex] =
+              destination;
+
+            return updated;
+          }
+
+          // Add new destination
+          return [
+            ...previous,
+            destination,
+          ];
+        }
+      );
+
+      setDestinationName("");
+
+      console.log(
+        "Captured destination:",
+        destination
+      );
+    }, [
+      localized,
+      destinationName,
+      getCurrentMapPosition,
+      createId,
+    ]);
 
   // --------------------------------------------------
-  // Delete one
+  // Delete destination
   // --------------------------------------------------
 
   const deleteDestination =
@@ -278,21 +293,22 @@ ${items}
     );
 
   // --------------------------------------------------
-  // Clear all
+  // Clear
   // --------------------------------------------------
 
   const clearAll =
     useCallback(() => {
-      if (destinations.length === 0) {
+      if (
+        destinations.length === 0
+      ) {
         return;
       }
 
-      const confirmed =
-        window.confirm(
-          "Clear all captured destinations?"
-        );
-
-      if (!confirmed) {
+      if (
+        !window.confirm(
+          "Clear all destinations?"
+        )
+      ) {
         return;
       }
 
@@ -300,7 +316,7 @@ ${items}
     }, [destinations.length]);
 
   // --------------------------------------------------
-  // Copy generated code
+  // Copy
   // --------------------------------------------------
 
   const copyCode =
@@ -315,19 +331,19 @@ ${items}
         );
       } catch (error) {
         console.error(
-          "Clipboard error:",
+          "Copy failed:",
           error
         );
 
         alert(
-          "Unable to copy. Please copy the code manually."
+          "Copy failed. Please copy manually."
         );
       }
     }, [generatedCode]);
 
-  // --------------------------------------------------
-  // MultiSet initialization
-  // --------------------------------------------------
+  // ==================================================
+  // MULTISET + THREE INITIALIZATION
+  // ==================================================
 
   useEffect(() => {
     let disposed = false;
@@ -339,29 +355,33 @@ ${items}
             return;
           }
 
+          // ------------------------------------------
+          // Check environment
+          // ------------------------------------------
+
           if (
             !CLIENT_ID ||
             !CLIENT_SECRET ||
             !MAP_CODE
           ) {
-            setStatus(
+            console.error(
               "Missing MultiSet environment variables."
             );
 
-            console.error(
-              "Missing MultiSet environment variables."
+            setStatus(
+              "Missing MultiSet configuration"
             );
 
             return;
           }
 
           setStatus(
-            "Creating Three.js scene..."
+            "Creating AR scene..."
           );
 
-          // ----------------------------------------
+          // ------------------------------------------
           // Renderer
-          // ----------------------------------------
+          // ------------------------------------------
 
           const renderer =
             new THREE.WebGLRenderer({
@@ -370,10 +390,7 @@ ${items}
             });
 
           renderer.setPixelRatio(
-            Math.min(
-              window.devicePixelRatio,
-              2
-            )
+            window.devicePixelRatio
           );
 
           renderer.setSize(
@@ -382,9 +399,9 @@ ${items}
           );
 
           /**
-           * IMPORTANT
+           * VERY IMPORTANT
            *
-           * WebXR must be enabled.
+           * Required for WebXR.
            */
           renderer.xr.enabled = true;
 
@@ -406,6 +423,9 @@ ${items}
           renderer.domElement.style.zIndex =
             "0";
 
+          renderer.domElement.style.display =
+            "block";
+
           containerRef.current.appendChild(
             renderer.domElement
           );
@@ -413,25 +433,27 @@ ${items}
           rendererRef.current =
             renderer;
 
-          // ----------------------------------------
+          // ------------------------------------------
           // Scene
-          // ----------------------------------------
+          // ------------------------------------------
 
           const scene =
             new THREE.Scene();
 
           /**
-           * Transparent scene so the
-           * real camera feed remains visible.
+           * VERY IMPORTANT
+           *
+           * Transparent background allows
+           * the real AR camera feed to show.
            */
           scene.background = null;
 
           sceneRef.current =
             scene;
 
-          // ----------------------------------------
+          // ------------------------------------------
           // Camera
-          // ----------------------------------------
+          // ------------------------------------------
 
           const camera =
             new THREE.PerspectiveCamera(
@@ -439,17 +461,23 @@ ${items}
               window.innerWidth /
                 window.innerHeight,
               0.01,
-              1000
+              100
             );
+
+          camera.position.set(
+            0,
+            0,
+            0
+          );
 
           scene.add(camera);
 
           cameraRef.current =
             camera;
 
-          // ----------------------------------------
+          // ------------------------------------------
           // Light
-          // ----------------------------------------
+          // ------------------------------------------
 
           scene.add(
             new THREE.AmbientLight(
@@ -458,9 +486,9 @@ ${items}
             )
           );
 
-          // ----------------------------------------
-          // MultiSet Client
-          // ----------------------------------------
+          // ------------------------------------------
+          // MultiSet client
+          // ------------------------------------------
 
           setStatus(
             "Authorizing MultiSet..."
@@ -482,14 +510,23 @@ ${items}
             return;
           }
 
-          // ----------------------------------------
-          // XR Session
-          // ----------------------------------------
-
-          setStatus(
-            "Starting MultiSet AR..."
+          console.log(
+            "MultiSet authorized"
           );
 
+          // ------------------------------------------
+          // XR Session
+          // ------------------------------------------
+
+          setStatus(
+            "Creating XR session..."
+          );
+
+          /**
+           * Keep this configuration minimal.
+           *
+           * These are the documented options.
+           */
           const session =
             new XRSessionManager(
               renderer.getContext() as WebGL2RenderingContext,
@@ -497,15 +534,6 @@ ${items}
                 client,
 
                 autoLocalize: true,
-
-                /**
-                 * Keep these values aligned with
-                 * the working Kokarya page.
-                 */
-                confidenceCheck: true,
-
-                onLocalizationSuccess:
-                  undefined,
 
                 onLocalizationFailure:
                   (reason) => {
@@ -517,7 +545,7 @@ ${items}
                     setLocalized(false);
 
                     setStatus(
-                      "Localization failed"
+                      "Localization failed — move camera around"
                     );
                   },
 
@@ -529,7 +557,7 @@ ${items}
                     );
 
                     setStatus(
-                      "MultiSet error"
+                      "MultiSet session error"
                     );
                   },
               }
@@ -538,9 +566,9 @@ ${items}
           sessionRef.current =
             session;
 
-          // ----------------------------------------
+          // ------------------------------------------
           // ThreeAdapter
-          // ----------------------------------------
+          // ------------------------------------------
 
           const adapter =
             new ThreeAdapter({
@@ -553,17 +581,22 @@ ${items}
               camera,
 
               /**
-               * We don't need the downloaded
-               * visual map mesh on this page.
+               * We don't need map mesh for
+               * destination capture.
                */
               showMesh: false,
 
               showGizmo: false,
 
               /**
-               * Keep the built-in AR button.
+               * Let MultiSet create the
+               * official START AR button.
                */
               useDefaultButton: true,
+
+              // --------------------------------------
+              // Localization success
+              // --------------------------------------
 
               onLocalizationSuccess:
                 (
@@ -575,7 +608,15 @@ ${items}
                   }
 
                   console.log(
-                    "MultiSet localized",
+                    "================================"
+                  );
+
+                  console.log(
+                    "MULTISET LOCALIZED"
+                  );
+
+                  console.log(
+                    "Result:",
                     result
                   );
 
@@ -584,9 +625,12 @@ ${items}
                     worldFromMap
                   );
 
+                  console.log(
+                    "================================"
+                  );
+
                   /**
-                   * Store the latest
-                   * map -> world transform.
+                   * Save MAP -> WORLD matrix.
                    */
                   worldFromMapRef.current =
                     worldFromMap.clone();
@@ -594,48 +638,44 @@ ${items}
                   setLocalized(true);
 
                   setStatus(
-                    "Localized — walk to a destination"
+                    "Localized — walk to destination"
                   );
                 },
 
-              /**
-               * IMPORTANT:
-               *
-               * ThreeAdapter synchronizes
-               * the camera before this callback.
-               *
-               * We use the camera's current
-               * world position and transform
-               * it back into MAP space.
-               */
+              // --------------------------------------
+              // XR frame
+              // --------------------------------------
+
               onXRFrame:
-                () => {
+                ({
+                  deltaSeconds,
+                }) => {
+                  if (disposed) {
+                    return;
+                  }
+
                   if (
-                    disposed ||
                     !worldFromMapRef.current
                   ) {
                     return;
                   }
 
-                  if (!localized) {
-                    return;
-                  }
-
-                  const cameraWorldPosition =
+                  /**
+                   * Camera world position.
+                   */
+                  const worldPosition =
                     new THREE.Vector3();
 
                   camera.getWorldPosition(
-                    cameraWorldPosition
+                    worldPosition
                   );
 
                   /**
-                   * worldFromMap:
+                   * MultiSet gives:
                    *
                    * MAP -> WORLD
                    *
-                   * Therefore:
-                   *
-                   * inverse(worldFromMap):
+                   * We need:
                    *
                    * WORLD -> MAP
                    */
@@ -644,8 +684,12 @@ ${items}
                       .clone()
                       .invert();
 
+                  /**
+                   * Convert camera world
+                   * position into map coordinates.
+                   */
                   const mapPosition =
-                    cameraWorldPosition
+                    worldPosition
                       .clone()
                       .applyMatrix4(
                         mapFromWorld
@@ -655,11 +699,8 @@ ${items}
                     mapPosition;
 
                   /**
-                   * Don't React-update the UI
-                   * every XR frame.
-                   *
-                   * Update roughly every
-                   * 100ms instead.
+                   * Don't update React state
+                   * every frame.
                    */
                   const now =
                     performance.now();
@@ -694,11 +735,19 @@ ${items}
           adapterRef.current =
             adapter;
 
-          // ----------------------------------------
-          // Start adapter
-          // ----------------------------------------
+          // ------------------------------------------
+          // Initialize adapter
+          // ------------------------------------------
 
-          await adapter.initialize();
+          /**
+           * IMPORTANT:
+           *
+           * Do NOT await this.
+           *
+           * MultiSet initializes its preview
+           * and AR button here.
+           */
+          adapter.initialize();
 
           if (disposed) {
             return;
@@ -708,31 +757,28 @@ ${items}
             "Ready — press START AR"
           );
 
-          // ----------------------------------------
+          console.log(
+            "MultiSet adapter initialized"
+          );
+
+          // ------------------------------------------
           // Resize
-          // ----------------------------------------
+          // ------------------------------------------
 
           const handleResize =
             () => {
-              if (
-                !rendererRef.current ||
-                !cameraRef.current
-              ) {
-                return;
-              }
-
               const width =
                 window.innerWidth;
 
               const height =
                 window.innerHeight;
 
-              cameraRef.current.aspect =
+              camera.aspect =
                 width / height;
 
-              cameraRef.current.updateProjectionMatrix();
+              camera.updateProjectionMatrix();
 
-              rendererRef.current.setSize(
+              renderer.setSize(
                 width,
                 height
               );
@@ -743,12 +789,12 @@ ${items}
             handleResize
           );
 
-          // Cleanup attached to renderer.
+          // Save cleanup function
           (
             renderer as THREE.WebGLRenderer & {
-              __destinationCaptureCleanup?: () => void;
+              __captureCleanup?: () => void;
             }
-          ).__destinationCaptureCleanup =
+          ).__captureCleanup =
             () => {
               window.removeEventListener(
                 "resize",
@@ -757,37 +803,48 @@ ${items}
             };
         } catch (error) {
           console.error(
-            "Destination Capture initialization error:",
+            "================================"
+          );
+
+          console.error(
+            "DESTINATION CAPTURE ERROR"
+          );
+
+          console.error(
             error
+          );
+
+          console.error(
+            "================================"
           );
 
           setStatus(
             error instanceof Error
               ? error.message
-              : "MultiSet initialization failed"
+              : "Initialization failed"
           );
         }
       };
 
     void initialize();
 
+    // ----------------------------------------------
+    // Cleanup
+    // ----------------------------------------------
+
     return () => {
       disposed = true;
-
-      /**
-       * Clear references.
-       */
-      currentMapPositionRef.current =
-        null;
 
       worldFromMapRef.current =
         null;
 
-      /**
-       * Adapter owns the XR render
-       * lifecycle.
-       */
-      adapterRef.current?.dispose();
+      currentMapPositionRef.current =
+        null;
+
+      // Adapter handles XR cleanup.
+      if (adapterRef.current) {
+        adapterRef.current.dispose();
+      }
 
       adapterRef.current =
         null;
@@ -801,9 +858,9 @@ ${items}
       if (renderer) {
         (
           renderer as THREE.WebGLRenderer & {
-            __destinationCaptureCleanup?: () => void;
+            __captureCleanup?: () => void;
           }
-        ).__destinationCaptureCleanup?.();
+        ).__captureCleanup?.();
 
         renderer.dispose();
 
@@ -827,12 +884,9 @@ ${items}
     };
   }, []);
 
-  /**
-   * Timestamp used to avoid calling
-   * React setState on every XR frame.
-   */
-  const lastUiUpdateRef =
-    useRef(0);
+  // ==================================================
+  // UI
+  // ==================================================
 
   return (
     <main
@@ -845,35 +899,39 @@ ${items}
           "Arial, sans-serif",
       }}
     >
-      {/* -----------------------------------------
-          AR / Three.js
-      ------------------------------------------ */}
+      {/* ============================================
+          THREE / CAMERA
+      ============================================= */}
 
       <div
         ref={containerRef}
         style={{
           position: "absolute",
           inset: 0,
+          zIndex: 0,
         }}
       />
 
-      {/* -----------------------------------------
+      {/* ============================================
           UI
-      ------------------------------------------ */}
+      ============================================= */}
 
       <div
         style={{
           position: "absolute",
           inset: 0,
-          zIndex: 20,
+          zIndex: 10,
           pointerEvents: "none",
         }}
       >
-        {/* Header */}
+        {/* ------------------------------------------
+            Header
+        ------------------------------------------- */}
 
         <div
           style={{
             position: "absolute",
+
             top: 20,
             left: 20,
             right: 20,
@@ -883,7 +941,7 @@ ${items}
             borderRadius: 18,
 
             background:
-              "rgba(15,15,18,0.90)",
+              "rgba(15,15,18,0.9)",
 
             backdropFilter:
               "blur(18px)",
@@ -895,9 +953,9 @@ ${items}
         >
           <div
             style={{
-              fontSize: 22,
+              fontSize: 21,
               fontWeight: 700,
-              marginBottom: 8,
+              marginBottom: 7,
             }}
           >
             Destination Capture
@@ -905,8 +963,8 @@ ${items}
 
           <div
             style={{
-              fontSize: 14,
               color: "#aaa",
+              fontSize: 13,
               marginBottom: 10,
             }}
           >
@@ -915,47 +973,33 @@ ${items}
 
           <div
             style={{
-              display: "flex",
-              gap: 14,
+              color: localized
+                ? "#4ade80"
+                : "#888",
               fontSize: 13,
             }}
           >
-            <span
-              style={{
-                color: localized
-                  ? "#4ade80"
-                  : "#aaa",
-              }}
-            >
-              ●{" "}
-              {localized
-                ? "Localized"
-                : "Not localized"}
-            </span>
-
-            {currentPosition && (
-              <span
-                style={{
-                  color: "#9ca3af",
-                }}
-              >
-                Position available
-              </span>
-            )}
+            ●{" "}
+            {localized
+              ? "Localized"
+              : "Waiting for localization"}
           </div>
         </div>
 
-        {/* Bottom panel */}
+        {/* ------------------------------------------
+            Bottom panel
+        ------------------------------------------- */}
 
         <div
           style={{
             position: "absolute",
+
             left: 20,
             right: 20,
             bottom: 20,
 
             maxHeight:
-              "calc(100vh - 160px)",
+              "calc(100vh - 150px)",
 
             overflowY: "auto",
 
@@ -978,27 +1022,27 @@ ${items}
 
           <div
             style={{
-              marginBottom: 15,
+              marginBottom: 16,
             }}
           >
             <div
               style={{
                 fontSize: 11,
                 fontWeight: 700,
-                color: "#888",
                 letterSpacing: 1,
-                marginBottom: 7,
+                color: "#777",
+                marginBottom: 8,
               }}
             >
-              CURRENT MAP COORDINATE
+              CURRENT MAP POSITION
             </div>
 
             {currentPosition ? (
               <div
                 style={{
                   display: "flex",
-                  gap: 18,
                   flexWrap: "wrap",
+                  gap: 18,
                   fontFamily:
                     "monospace",
                   fontSize: 14,
@@ -1020,7 +1064,7 @@ ${items}
               <div
                 style={{
                   color: "#777",
-                  fontSize: 14,
+                  fontSize: 13,
                 }}
               >
                 Start AR and localize first.
@@ -1034,7 +1078,7 @@ ${items}
             style={{
               display: "flex",
               gap: 8,
-              marginBottom: 16,
+              marginBottom: 15,
             }}
           >
             <input
@@ -1051,8 +1095,8 @@ ${items}
                   captureDestination();
                 }
               }}
-              disabled={!localized}
               placeholder="Destination name"
+              disabled={!localized}
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -1060,18 +1104,18 @@ ${items}
                 padding:
                   "13px 14px",
 
-                borderRadius: 11,
-
                 border:
                   "1px solid #444",
+
+                borderRadius: 11,
 
                 background: "#111",
 
                 color: "#fff",
 
-                fontSize: 15,
-
                 outline: "none",
+
+                fontSize: 14,
               }}
             />
 
@@ -1082,12 +1126,12 @@ ${items}
               }
               disabled={!localized}
               style={{
-                padding:
-                  "13px 16px",
-
                 border: "none",
 
                 borderRadius: 11,
+
+                padding:
+                  "13px 16px",
 
                 background:
                   localized
@@ -1117,21 +1161,21 @@ ${items}
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
                 justifyContent:
                   "space-between",
+                alignItems:
+                  "center",
                 marginBottom: 8,
               }}
             >
-              <div
+              <strong
                 style={{
-                  fontWeight: 700,
                   fontSize: 14,
                 }}
               >
-                Captured (
+                Destinations (
                 {destinations.length})
-              </div>
+              </strong>
 
               <button
                 type="button"
@@ -1153,7 +1197,7 @@ ${items}
                   cursor: "pointer",
                 }}
               >
-                Clear All
+                Clear
               </button>
             </div>
           )}
@@ -1166,12 +1210,14 @@ ${items}
                 key={destination.id}
                 style={{
                   display: "flex",
-                  alignItems:
-                    "center",
+
                   justifyContent:
                     "space-between",
 
-                  gap: 12,
+                  alignItems:
+                    "center",
+
+                  gap: 10,
 
                   padding:
                     "10px 12px",
@@ -1183,15 +1229,11 @@ ${items}
                   background: "#111",
                 }}
               >
-                <div
-                  style={{
-                    minWidth: 0,
-                  }}
-                >
+                <div>
                   <div
                     style={{
                       fontWeight: 600,
-                      marginBottom: 3,
+                      fontSize: 14,
                     }}
                   >
                     {destination.name}
@@ -1199,16 +1241,23 @@ ${items}
 
                   <div
                     style={{
+                      marginTop: 4,
+
                       color: "#888",
+
                       fontFamily:
                         "monospace",
+
                       fontSize: 11,
                     }}
                   >
+                    X{" "}
                     {destination.position.x}
-                    {"  "}
+                    {"   "}
+                    Y{" "}
                     {destination.position.y}
-                    {"  "}
+                    {"   "}
+                    Z{" "}
                     {destination.position.z}
                   </div>
                 </div>
@@ -1222,13 +1271,15 @@ ${items}
                   }
                   style={{
                     border: "none",
+
                     background:
                       "transparent",
+
                     color:
-                      "#ff6b6b",
+                      "#ff7070",
+
                     cursor:
                       "pointer",
-                    flexShrink: 0,
                   }}
                 >
                   Delete
@@ -1242,7 +1293,7 @@ ${items}
           {destinations.length > 0 && (
             <div
               style={{
-                marginTop: 15,
+                marginTop: 16,
               }}
             >
               <div
@@ -1255,14 +1306,13 @@ ${items}
                   marginBottom: 8,
                 }}
               >
-                <div
+                <strong
                   style={{
-                    fontWeight: 700,
                     fontSize: 14,
                   }}
                 >
-                  Copy-paste code
-                </div>
+                  Generated Code
+                </strong>
 
                 <button
                   type="button"
@@ -1273,7 +1323,7 @@ ${items}
                     borderRadius: 9,
 
                     padding:
-                      "8px 13px",
+                      "8px 12px",
 
                     background:
                       "#00bfff",
@@ -1282,8 +1332,7 @@ ${items}
 
                     fontWeight: 700,
 
-                    cursor:
-                      "pointer",
+                    cursor: "pointer",
                   }}
                 >
                   Copy Code
@@ -1294,25 +1343,24 @@ ${items}
                 style={{
                   margin: 0,
 
-                  padding: 15,
+                  padding: 14,
 
                   borderRadius: 12,
 
-                  background: "#050505",
+                  background:
+                    "#050505",
 
                   color: "#9ff",
-
-                  fontFamily:
-                    "monospace",
-
-                  fontSize: 12,
-
-                  lineHeight: 1.55,
 
                   overflowX:
                     "auto",
 
-                  whiteSpace: "pre",
+                  fontSize: 11,
+
+                  lineHeight: 1.55,
+
+                  fontFamily:
+                    "monospace",
                 }}
               >
                 {generatedCode}
