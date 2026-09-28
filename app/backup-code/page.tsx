@@ -1,1040 +1,2051 @@
-"use client";
+'use client'
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-
-import * as THREE from "three";
+import { useEffect, useRef, useState } from 'react'
+import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 import {
   MultisetClient,
   XRSessionManager,
-} from "@multisetai/vps/core";
+} from '@multisetai/vps/core'
 
-import { ThreeAdapter } from "@multisetai/vps/three";
+import {
+  ThreeAdapter,
+  MapSpace,
+} from '@multisetai/vps/three'
 
-type CapturedDestination = {
-  id: string;
-  name: string;
-  position: {
-    x: number;
-    y: number;
-    z: number;
-  };
-};
+import {
+  Navigation,
+  NavMeshPathfinder,
+} from '@multisetai/vps/navigation'
 
-const MAP_CODE =
-  process.env.NEXT_PUBLIC_MULTISET_MAP_CODE ?? "";
+type Destination = {
+  id: string
+  name: string
+  position: THREE.Vector3
+}
 
-const CLIENT_ID =
-  process.env.NEXT_PUBLIC_MULTISET_CLIENT_ID ?? "";
+const DESTINATIONS: Destination[] = [
+  {
+    id: 'entrance',
+    name: 'Entrance',
+    position: new THREE.Vector3(
+      -0.149,
+      -0.543,
+      1.201
+    ),
+  },
 
-const CLIENT_SECRET =
-  process.env.NEXT_PUBLIC_MULTISET_CLIENT_SECRET ?? "";
+  {
+    id: 'pantry',
+    name: 'Pantry',
+    position: new THREE.Vector3(
+      0.607,
+      -0.493,
+      6.68
+    ),
+  },
 
-export default function DestinationCapturePage() {
-  // =========================================================
-  // DOM
-  // =========================================================
+  {
+    id: 'cabin-1',
+    name: 'Cabin 1',
+    position: new THREE.Vector3(
+      4.758,
+      -0.47,
+      1.897
+    ),
+  },
+
+  {
+    id: 'cabin-2',
+    name: 'Cabin 2',
+    position: new THREE.Vector3(
+      8.962,
+      -0.488,
+      1.736
+    ),
+  },
+
+  {
+    id: 'meeting-room',
+    name: 'Meeting room',
+    position: new THREE.Vector3(
+      11.588,
+      -0.468,
+      1.757
+    ),
+  },
+]
+
+// =============================================================
+// COMPONENT
+// =============================================================
+
+export default function KokaryaFullMapPage() {
+  // ===========================================================
+  // THREE REFS
+  // ===========================================================
 
   const containerRef =
-    useRef<HTMLDivElement | null>(null);
-
-  // =========================================================
-  // THREE
-  // =========================================================
+    useRef<HTMLDivElement | null>(null)
 
   const rendererRef =
-    useRef<THREE.WebGLRenderer | null>(null);
-
-  const sceneRef =
-    useRef<THREE.Scene | null>(null);
-
-  const cameraRef =
-    useRef<THREE.PerspectiveCamera | null>(null);
-
-  // =========================================================
-  // MULTISET
-  // =========================================================
+    useRef<THREE.WebGLRenderer | null>(null)
 
   const adapterRef =
-    useRef<ThreeAdapter | null>(null);
+    useRef<ThreeAdapter | null>(null)
 
-  const sessionRef =
-    useRef<XRSessionManager | null>(null);
+  const mapSpaceRef =
+    useRef<MapSpace | null>(null)
 
-  /**
-   * MultiSet gives us:
-   *
-   * MAP -> WORLD
-   */
-  const worldFromMapRef =
-    useRef<THREE.Matrix4 | null>(null);
+  const pathfinderRef =
+    useRef<NavMeshPathfinder | null>(null)
 
-  /**
-   * Latest device position in MAP coordinates.
-   */
-  const currentMapPositionRef =
-    useRef<THREE.Vector3 | null>(null);
+  const navigationRef =
+    useRef<Navigation | null>(null)
 
-  /**
-   * Avoid React state updates on every XR frame.
-   */
-  const lastUiUpdateRef =
-    useRef(0);
+  // ===========================================================
+  // NAVIGATION VISUAL REFS
+  // ===========================================================
 
-  // =========================================================
-  // UI STATE
-  // =========================================================
+  const navigationVisualRef =
+    useRef<THREE.Group | null>(null)
+
+  const routeCurveRef =
+    useRef<THREE.CatmullRomCurve3 | null>(null)
+
+  const chevronsRef =
+    useRef<THREE.Mesh[]>([])
+
+  const destinationMarkerRef =
+    useRef<THREE.Group | null>(null)
+
+  const destinationLabelRef =
+    useRef<THREE.Sprite | null>(null)
+
+  const navigationActiveRef =
+    useRef(false)
+
+  const animationTimeRef =
+    useRef(0)
+
+  // ===========================================================
+  // STATE
+  // ===========================================================
 
   const [status, setStatus] =
-    useState("Initializing...");
+    useState('Initializing...')
 
   const [localized, setLocalized] =
-    useState(false);
+    useState(false)
 
-  const [destinationName, setDestinationName] =
-    useState("");
+  const [groupCount, setGroupCount] =
+    useState<number | null>(null)
 
-  const [currentPosition, setCurrentPosition] =
-    useState<{
-      x: number;
-      y: number;
-      z: number;
-    } | null>(null);
+  const [distance, setDistance] =
+    useState<number | null>(null)
 
-  const [destinations, setDestinations] =
-    useState<CapturedDestination[]>([]);
+  const [selectedDestination, setSelectedDestination] =
+    useState('')
 
-  // =========================================================
-  // CREATE SAFE DESTINATION ID
-  // =========================================================
+  const [pathVisible, setPathVisible] =
+    useState(false)
 
-  const createId = useCallback(
-    (name: string) => {
-      return name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-    },
-    []
-  );
+  const [error, setError] =
+    useState('')
 
-  // =========================================================
-  // GENERATED DESTINATION CODE
-  // =========================================================
+  const [showTargets, setShowTargets] =
+    useState(true)
 
-  const generatedCode = useMemo(() => {
-    if (destinations.length === 0) {
-      return `const DESTINATIONS: Destination[] = [];`;
+  const [isNavigating, setIsNavigating] =
+    useState(false)
+
+  const [arrivedMessage, setArrivedMessage] =
+    useState('')
+
+  // ===========================================================
+  // CREATE CHEVRON GEOMETRY
+  // ===========================================================
+
+  const createChevronGeometry = () => {
+    const shape =
+      new THREE.Shape()
+
+    const width = 0.28
+    const height = 0.42
+    const thickness = 0.10
+
+    shape.moveTo(
+      -width,
+      0
+    )
+
+    shape.lineTo(
+      0,
+      height
+    )
+
+    shape.lineTo(
+      width,
+      0
+    )
+
+    shape.lineTo(
+      width * 0.42,
+      0
+    )
+
+    shape.lineTo(
+      0,
+      height * 0.52
+    )
+
+    shape.lineTo(
+      -width * 0.42,
+      0
+    )
+
+    shape.closePath()
+
+    const geometry =
+      new THREE.ShapeGeometry(
+        shape
+      )
+
+    /*
+     * ShapeGeometry is created in XY.
+     *
+     * Rotate it so it lies horizontally
+     * on the AR floor.
+     */
+    geometry.rotateX(
+      -Math.PI / 2
+    )
+
+    /*
+     * Slightly lift the chevron
+     * above the floor.
+     */
+    geometry.translate(
+      0,
+      thickness,
+      0
+    )
+
+    return geometry
+  }
+
+  // ===========================================================
+  // CREATE DESTINATION LABEL
+  // ===========================================================
+
+  const createDestinationLabel = (
+    text: string
+  ) => {
+    const canvas =
+      document.createElement('canvas')
+
+    canvas.width = 512
+    canvas.height = 160
+
+    const context =
+      canvas.getContext('2d')
+
+    if (!context) {
+      return null
     }
 
-    const items = destinations
-      .map((destination) => {
-        const safeName =
-          destination.name.replace(
-            /'/g,
-            "\\'"
-          );
+    context.clearRect(
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
 
-        return `  {
-    id: '${destination.id}',
-    name: '${safeName}',
-    position: new THREE.Vector3(
-      ${destination.position.x},
-      ${destination.position.y},
-      ${destination.position.z}
-    ),
-  }`;
+    /*
+     * Rounded black background.
+     */
+    const radius = 36
+
+    context.beginPath()
+
+    context.roundRect(
+      10,
+      10,
+      492,
+      140,
+      radius
+    )
+
+    context.fillStyle =
+      'rgba(15,15,18,0.92)'
+
+    context.fill()
+
+    /*
+     * White text.
+     */
+    context.font =
+      'bold 42px Arial'
+
+    context.textAlign =
+      'center'
+
+    context.textBaseline =
+      'middle'
+
+    context.fillStyle =
+      '#ffffff'
+
+    context.fillText(
+      text,
+      canvas.width / 2,
+      canvas.height / 2
+    )
+
+    const texture =
+      new THREE.CanvasTexture(
+        canvas
+      )
+
+    texture.needsUpdate = true
+
+    const material =
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
       })
-      .join(",\n\n");
 
-    return `const DESTINATIONS: Destination[] = [
+    const sprite =
+      new THREE.Sprite(
+        material
+      )
 
-${items}
+    sprite.scale.set(
+      1.8,
+      0.56,
+      1
+    )
 
-];`;
-  }, [destinations]);
+    return sprite
+  }
 
-  // =========================================================
-  // GET CURRENT MAP POSITION
-  // =========================================================
+  // ===========================================================
+  // CREATE DESTINATION MARKER
+  // ===========================================================
 
-  const getCurrentMapPosition =
-    useCallback(() => {
-      const position =
-        currentMapPositionRef.current;
+  const createDestinationMarker = (
+    destination: Destination
+  ) => {
+    const group =
+      new THREE.Group()
 
-      if (!position) {
-        return null;
-      }
-
-      return {
-        x: Number(
-          position.x.toFixed(3)
+    /*
+     * Main red sphere.
+     */
+    const sphere =
+      new THREE.Mesh(
+        new THREE.SphereGeometry(
+          0.22,
+          24,
+          24
         ),
+        new THREE.MeshBasicMaterial({
+          color: 0xff304f,
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: false,
+        })
+      )
 
-        y: Number(
-          position.y.toFixed(3)
+    sphere.position.y =
+      1.15
+
+    group.add(
+      sphere
+    )
+
+    /*
+     * Pin body.
+     */
+    const cone =
+      new THREE.Mesh(
+        new THREE.ConeGeometry(
+          0.16,
+          0.52,
+          24
         ),
+        new THREE.MeshBasicMaterial({
+          color: 0xff304f,
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: false,
+        })
+      )
 
-        z: Number(
-          position.z.toFixed(3)
+    cone.position.y =
+      0.76
+
+    cone.rotation.x =
+      Math.PI
+
+    group.add(
+      cone
+    )
+
+    /*
+     * Small glowing ring on floor.
+     */
+    const ring =
+      new THREE.Mesh(
+        new THREE.RingGeometry(
+          0.28,
+          0.38,
+          32
         ),
-      };
-    }, []);
+        new THREE.MeshBasicMaterial({
+          color: 0xff304f,
+          transparent: true,
+          opacity: 0.55,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      )
 
-  // =========================================================
-  // CAPTURE DESTINATION
-  // =========================================================
+    ring.rotation.x =
+      -Math.PI / 2
 
-  const captureDestination =
-    useCallback(() => {
-      if (!localized) {
-        alert(
-          "Please wait until MultiSet is localized."
-        );
+    ring.position.y =
+      0.04
 
-        return;
-      }
+    group.add(
+      ring
+    )
 
-      const name =
-        destinationName.trim();
+    /*
+     * Destination label.
+     */
+    const label =
+      createDestinationLabel(
+        destination.name
+      )
 
-      if (!name) {
-        alert(
-          "Enter a destination name."
-        );
+    if (label) {
+      label.position.y =
+        1.72
 
-        return;
-      }
+      group.add(
+        label
+      )
 
-      const position =
-        getCurrentMapPosition();
+      destinationLabelRef.current =
+        label
+    }
 
-      if (!position) {
-        alert(
-          "Current map position is not available yet."
-        );
+    group.position.copy(
+      destination.position
+    )
 
-        return;
-      }
+    destinationMarkerRef.current =
+      group
 
-      const id =
-        createId(name);
+    return group
+  }
 
-      if (!id) {
-        alert(
-          "Please enter a valid destination name."
-        );
+  // ===========================================================
+  // CREATE ROUTE VISUAL
+  // ===========================================================
 
-        return;
-      }
+  const createRouteVisual = (
+    corners: readonly THREE.Vector3[]
+  ) => {
+    const mapSpace =
+      mapSpaceRef.current
 
-      const destination: CapturedDestination = {
-        id,
-        name,
-        position,
-      };
+    if (!mapSpace) {
+      return
+    }
 
-      setDestinations(
-        (previous) => {
-          const existingIndex =
-            previous.findIndex(
-              (item) =>
-                item.id === id
-            );
+    /*
+     * Remove old route visual.
+     */
+    if (
+      navigationVisualRef.current
+    ) {
+      mapSpace.object.remove(
+        navigationVisualRef.current
+      )
 
-          /**
-           * If destination already exists,
-           * replace its coordinates.
-           */
-          if (existingIndex !== -1) {
-            const updated = [
-              ...previous,
-            ];
+      navigationVisualRef.current
+        .traverse(
+          (object) => {
+            const mesh =
+              object as THREE.Mesh
 
-            updated[existingIndex] =
-              destination;
+            if (mesh.geometry) {
+              mesh.geometry.dispose()
+            }
 
-            return updated;
+            const material =
+              mesh.material
+
+            if (
+              material instanceof
+              THREE.Material
+            ) {
+              material.dispose()
+            }
           }
+        )
+    }
 
-          return [
-            ...previous,
-            destination,
-          ];
-        }
-      );
+    chevronsRef.current = []
 
-      setDestinationName("");
+    const visualGroup =
+      new THREE.Group()
 
-      console.log(
-        "[Destination Capture]",
-        destination
-      );
-    }, [
-      localized,
-      destinationName,
-      getCurrentMapPosition,
-      createId,
-    ]);
+    navigationVisualRef.current =
+      visualGroup
 
-  // =========================================================
-  // DELETE ONE DESTINATION
-  // =========================================================
+    mapSpace.object.add(
+      visualGroup
+    )
 
-  const deleteDestination =
-    useCallback(
-      (id: string) => {
-        setDestinations(
-          (previous) =>
-            previous.filter(
-              (item) =>
-                item.id !== id
-            )
-        );
-      },
-      []
-    );
+    // =========================================================
+    // CURVE
+    // =========================================================
 
-  // =========================================================
-  // CLEAR ALL
-  // =========================================================
+    const points =
+      corners.map(
+        (point) =>
+          point.clone()
+      )
 
-  const clearAll =
-    useCallback(() => {
-      if (destinations.length === 0) {
-        return;
-      }
+    const curve =
+      new THREE.CatmullRomCurve3(
+        points,
+        false,
+        'centripetal',
+        0.15
+      )
 
-      const confirmed =
-        window.confirm(
-          "Clear all captured destinations?"
-        );
+    routeCurveRef.current =
+      curve
 
-      if (!confirmed) {
-        return;
-      }
+    // =========================================================
+    // ROUTE RAILS
+    // =========================================================
 
-      setDestinations([]);
-    }, [destinations.length]);
+    const railMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x00c8ff,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+      })
 
-  // =========================================================
-  // COPY GENERATED CODE
-  // =========================================================
+    const leftRailCurve =
+      createOffsetCurve(
+        curve,
+        0.18
+      )
 
-  const copyCode =
-    useCallback(async () => {
-      try {
-        await navigator.clipboard.writeText(
-          generatedCode
-        );
+    const rightRailCurve =
+      createOffsetCurve(
+        curve,
+        -0.18
+      )
 
-        alert(
-          "DESTINATIONS code copied."
-        );
-      } catch (error) {
-        console.error(
-          "Clipboard error:",
-          error
-        );
+    const railGeometryLeft =
+      new THREE.TubeGeometry(
+        leftRailCurve,
+        Math.max(
+          32,
+          points.length * 16
+        ),
+        0.018,
+        6,
+        false
+      )
 
-        alert(
-          "Unable to copy. Please copy the code manually."
-        );
-      }
-    }, [generatedCode]);
+    const railGeometryRight =
+      new THREE.TubeGeometry(
+        rightRailCurve,
+        Math.max(
+          32,
+          points.length * 16
+        ),
+        0.018,
+        6,
+        false
+      )
 
-  // =========================================================
-  // MULTISET + THREE INITIALIZATION
-  // =========================================================
+    const leftRail =
+      new THREE.Mesh(
+        railGeometryLeft,
+        railMaterial.clone()
+      )
 
-  useEffect(() => {
-    let disposed = false;
+    const rightRail =
+      new THREE.Mesh(
+        railGeometryRight,
+        railMaterial.clone()
+      )
 
-    const initialize =
-      async () => {
-        try {
-          if (!containerRef.current) {
-            return;
-          }
+    leftRail.position.y +=
+      0.08
 
-          // -------------------------------------------------
-          // ENV CHECK
-          // -------------------------------------------------
+    rightRail.position.y +=
+      0.08
+
+    leftRail.frustumCulled =
+      false
+
+    rightRail.frustumCulled =
+      false
+
+    visualGroup.add(
+      leftRail,
+      rightRail
+    )
+
+    // =========================================================
+    // CHEVRONS
+    // =========================================================
+
+    const chevronMaterial =
+      new THREE.MeshBasicMaterial({
+        color: 0x00d9ff,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        depthTest: false,
+      })
+
+    const count = 10
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+      const mesh =
+        new THREE.Mesh(
+          createChevronGeometry(),
+          chevronMaterial.clone()
+        )
+
+      mesh.frustumCulled =
+        false
+
+      /*
+       * Store initial progress
+       * in userData.
+       */
+      mesh.userData.progress =
+        i / count
+
+      visualGroup.add(
+        mesh
+      )
+
+      chevronsRef.current.push(
+        mesh
+      )
+    }
+
+    // =========================================================
+    // DESTINATION MARKER
+    // =========================================================
+
+    const destination =
+      DESTINATIONS.find(
+        (item) =>
+          item.id ===
+          selectedDestination
+      )
+
+    if (destination) {
+      const marker =
+        createDestinationMarker(
+          destination
+        )
+
+      visualGroup.add(
+        marker
+      )
+    }
+  }
+
+  // ===========================================================
+  // OFFSET CURVE
+  // ===========================================================
+
+  const createOffsetCurve = (
+    source:
+      THREE.CatmullRomCurve3,
+    offset: number
+  ) => {
+    const samples =
+      Math.max(
+        40,
+        source.points.length * 20
+      )
+
+    const points:
+      THREE.Vector3[] = []
+
+    for (
+      let i = 0;
+      i <= samples;
+      i++
+    ) {
+      const t =
+        i / samples
+
+      const point =
+        source.getPointAt(
+          t
+        )
+
+      const tangent =
+        source.getTangentAt(
+          t
+        )
+
+      /*
+       * Horizontal perpendicular.
+       */
+      const side =
+        new THREE.Vector3(
+          -tangent.z,
+          0,
+          tangent.x
+        ).normalize()
+
+      point.add(
+        side.multiplyScalar(
+          offset
+        )
+      )
+
+      point.y +=
+        0.03
+
+      points.push(
+        point
+      )
+    }
+
+    return new THREE.CatmullRomCurve3(
+      points,
+      false,
+      'centripetal',
+      0.1
+    )
+  }
+
+  // ===========================================================
+  // CLEAR ROUTE VISUAL
+  // ===========================================================
+
+  const clearRouteVisual = () => {
+    const mapSpace =
+      mapSpaceRef.current
+
+    const group =
+      navigationVisualRef.current
+
+    if (
+      mapSpace &&
+      group
+    ) {
+      mapSpace.object.remove(
+        group
+      )
+
+      group.traverse(
+        (object) => {
+          const mesh =
+            object as THREE.Mesh
 
           if (
-            !CLIENT_ID ||
-            !CLIENT_SECRET ||
-            !MAP_CODE
+            mesh.geometry
           ) {
-            setStatus(
-              "Missing MultiSet environment variables."
-            );
-
-            console.error(
-              "Missing MultiSet environment variables."
-            );
-
-            return;
+            mesh.geometry.dispose()
           }
 
-          setStatus(
-            "Creating Three.js scene..."
-          );
+          const material =
+            mesh.material
 
-          // =================================================
-          // THREE RENDERER
-          // =================================================
-
-          const renderer =
-            new THREE.WebGLRenderer({
-              antialias: true,
-
-              /**
-               * VERY IMPORTANT
-               *
-               * Allows AR camera feed to
-               * remain visible behind canvas.
-               */
-              alpha: true,
-            });
-
-          renderer.setPixelRatio(
-            Math.min(
-              window.devicePixelRatio,
-              2
-            )
-          );
-
-          renderer.setSize(
-            window.innerWidth,
-            window.innerHeight
-          );
-
-          /**
-           * VERY IMPORTANT
-           *
-           * WebXR must be enabled.
-           */
-          renderer.xr.enabled = true;
-
-          /**
-           * VERY IMPORTANT
-           *
-           * Transparent WebGL canvas.
-           *
-           * Without this, the canvas can
-           * appear completely black over
-           * the camera feed.
-           */
-          renderer.setClearColor(
-            0x000000,
-            0
-          );
-
-          renderer.domElement.style.position =
-            "fixed";
-
-          renderer.domElement.style.left =
-            "0";
-
-          renderer.domElement.style.top =
-            "0";
-
-          renderer.domElement.style.width =
-            "100%";
-
-          renderer.domElement.style.height =
-            "100%";
-
-          renderer.domElement.style.zIndex =
-            "0";
-
-          renderer.domElement.style.display =
-            "block";
-
-          containerRef.current.appendChild(
-            renderer.domElement
-          );
-
-          rendererRef.current =
-            renderer;
-
-          // =================================================
-          // SCENE
-          // =================================================
-
-          const scene =
-            new THREE.Scene();
-
-          /**
-           * Transparent scene.
-           */
-          scene.background = null;
-
-          sceneRef.current =
-            scene;
-
-          // =================================================
-          // CAMERA
-          // =================================================
-
-          const camera =
-            new THREE.PerspectiveCamera(
-              70,
-
-              window.innerWidth /
-                window.innerHeight,
-
-              0.01,
-
-              1000
-            );
-
-          camera.position.set(
-            0,
-            0,
-            0
-          );
-
-          scene.add(camera);
-
-          cameraRef.current =
-            camera;
-
-          // =================================================
-          // LIGHT
-          // =================================================
-
-          scene.add(
-            new THREE.AmbientLight(
-              0xffffff,
-              1
-            )
-          );
-
-          // =================================================
-          // MULTISET CLIENT
-          // =================================================
-
-          setStatus(
-            "Authorizing MultiSet..."
-          );
-
-          const client =
-            new MultisetClient({
-              clientId:
-                CLIENT_ID,
-
-              clientSecret:
-                CLIENT_SECRET,
-
-              mapType: "map",
-
-              code:
-                MAP_CODE,
-            });
-
-          await client.authorize();
-
-          if (disposed) {
-            return;
+          if (
+            material instanceof
+            THREE.Material
+          ) {
+            material.dispose()
           }
-
-          console.log(
-            "[Destination Capture] MultiSet authorized"
-          );
-
-          // =================================================
-          // XR SESSION
-          // =================================================
-
-          setStatus(
-            "Starting MultiSet AR..."
-          );
-
-          const session =
-            new XRSessionManager(
-              renderer.getContext() as WebGL2RenderingContext,
-              {
-                client,
-
-                autoLocalize:
-                  true,
-
-                confidenceCheck:
-                  true,
-
-                onLocalizationSuccess:
-                  undefined,
-
-                onLocalizationFailure:
-                  (reason) => {
-                    console.warn(
-                      "[Destination Capture] Localization failed:",
-                      reason
-                    );
-
-                    setLocalized(
-                      false
-                    );
-
-                    setStatus(
-                      "Localization failed — move camera around"
-                    );
-                  },
-
-                onError:
-                  (error) => {
-                    console.error(
-                      "[Destination Capture] MultiSet error:",
-                      error
-                    );
-
-                    setStatus(
-                      "MultiSet error"
-                    );
-                  },
-              }
-            );
-
-          sessionRef.current =
-            session;
-
-          // =================================================
-          // THREE ADAPTER
-          // =================================================
-
-          const adapter =
-            new ThreeAdapter({
-              session,
-
-              renderer,
-
-              scene,
-
-              camera,
-
-              /**
-               * We don't need the
-               * visual map mesh here.
-               */
-              showMesh:
-                false,
-
-              showGizmo:
-                false,
-
-              /**
-               * Let MultiSet create
-               * its official START AR button.
-               */
-              useDefaultButton:
-                true,
-
-              // =============================================
-              // LOCALIZATION SUCCESS
-              // =============================================
-
-              onLocalizationSuccess:
-                (
-                  result,
-                  worldFromMap
-                ) => {
-                  if (disposed) {
-                    return;
-                  }
-
-                  console.log(
-                    "================================"
-                  );
-
-                  console.log(
-                    "[Destination Capture] LOCALIZED"
-                  );
-
-                  console.log(
-                    "Result:",
-                    result
-                  );
-
-                  console.log(
-                    "worldFromMap:",
-                    worldFromMap
-                  );
-
-                  console.log(
-                    "================================"
-                  );
-
-                  /**
-                   * Store:
-                   *
-                   * MAP -> WORLD
-                   */
-                  worldFromMapRef.current =
-                    worldFromMap.clone();
-
-                  setLocalized(
-                    true
-                  );
-
-                  setStatus(
-                    "Localized — walk to destination"
-                  );
-                },
-
-              // =============================================
-              // XR FRAME
-              // =============================================
-
-              onXRFrame:
-                () => {
-                  if (disposed) {
-                    return;
-                  }
-
-                  /**
-                   * We need the localization
-                   * transform before calculating
-                   * map coordinates.
-                   */
-                  if (
-                    !worldFromMapRef.current
-                  ) {
-                    return;
-                  }
-
-                  // -----------------------------------------
-                  // CAMERA WORLD POSITION
-                  // -----------------------------------------
-
-                  const cameraWorldPosition =
-                    new THREE.Vector3();
-
-                  camera.getWorldPosition(
-                    cameraWorldPosition
-                  );
-
-                  // -----------------------------------------
-                  // MAP -> WORLD
-                  //
-                  // worldFromMap
-                  //
-                  // Therefore:
-                  //
-                  // WORLD -> MAP
-                  // = inverse(worldFromMap)
-                  // -----------------------------------------
-
-                  const mapFromWorld =
-                    worldFromMapRef.current
-                      .clone()
-                      .invert();
-
-                  // -----------------------------------------
-                  // WORLD -> MAP
-                  // -----------------------------------------
-
-                  const mapPosition =
-                    cameraWorldPosition
-                      .clone()
-                      .applyMatrix4(
-                        mapFromWorld
-                      );
-
-                  // -----------------------------------------
-                  // STORE CURRENT MAP POSITION
-                  // -----------------------------------------
-
-                  currentMapPositionRef.current =
-                    mapPosition;
-
-                  // -----------------------------------------
-                  // UPDATE UI ~10 FPS
-                  // -----------------------------------------
-
-                  const now =
-                    performance.now();
-
-                  if (
-                    now -
-                      lastUiUpdateRef.current <
-                    100
-                  ) {
-                    return;
-                  }
-
-                  lastUiUpdateRef.current =
-                    now;
-
-                  setCurrentPosition({
-                    x: Number(
-                      mapPosition.x.toFixed(
-                        3
-                      )
-                    ),
-
-                    y: Number(
-                      mapPosition.y.toFixed(
-                        3
-                      )
-                    ),
-
-                    z: Number(
-                      mapPosition.z.toFixed(
-                        3
-                      )
-                    ),
-                  });
-                },
-            });
-
-          adapterRef.current =
-            adapter;
-
-          // =================================================
-          // INITIALIZE ADAPTER
-          // =================================================
-
-          /**
-           * IMPORTANT
-           *
-           * Wait for adapter initialization.
-           */
-          await adapter.initialize();
-
-          if (disposed) {
-            return;
-          }
-
-          setStatus(
-            "Ready — press START AR"
-          );
-
-          console.log(
-            "[Destination Capture] Ready"
-          );
-
-          // =================================================
-          // RESIZE
-          // =================================================
-
-          const handleResize =
-            () => {
-              if (
-                !rendererRef.current ||
-                !cameraRef.current
-              ) {
-                return;
-              }
-
-              const width =
-                window.innerWidth;
-
-              const height =
-                window.innerHeight;
-
-              cameraRef.current.aspect =
-                width / height;
-
-              cameraRef.current.updateProjectionMatrix();
-
-              rendererRef.current.setSize(
-                width,
-                height
-              );
-            };
-
-          window.addEventListener(
-            "resize",
-            handleResize
-          );
-
-          // Store cleanup function.
-          (
-            renderer as THREE.WebGLRenderer & {
-              __destinationCaptureCleanup?: () => void;
-            }
-          ).__destinationCaptureCleanup =
-            () => {
-              window.removeEventListener(
-                "resize",
-                handleResize
-              );
-            };
-        } catch (error) {
-          console.error(
-            "Destination Capture initialization error:",
-            error
-          );
-
-          setStatus(
-            error instanceof Error
-              ? error.message
-              : "MultiSet initialization failed"
-          );
         }
-      };
+      )
+    }
 
-    void initialize();
+    navigationVisualRef.current =
+      null
 
-    // =======================================================
-    // CLEANUP
-    // =======================================================
+    routeCurveRef.current =
+      null
 
-    return () => {
-      disposed = true;
+    chevronsRef.current =
+      []
 
-      currentMapPositionRef.current =
-        null;
+    destinationMarkerRef.current =
+      null
 
-      worldFromMapRef.current =
-        null;
+    destinationLabelRef.current =
+      null
+  }
 
-      // Adapter owns XR lifecycle.
-      adapterRef.current?.dispose();
+  // ===========================================================
+  // ANIMATE NAVIGATION
+  // ===========================================================
 
-      adapterRef.current =
-        null;
+  const animateNavigation = (
+    deltaSeconds: number
+  ) => {
+    if (
+      !navigationActiveRef.current
+    ) {
+      return
+    }
 
-      sessionRef.current =
-        null;
+    const curve =
+      routeCurveRef.current
 
-      const renderer =
-        rendererRef.current;
+    if (!curve) {
+      return
+    }
 
-      if (renderer) {
-        (
-          renderer as THREE.WebGLRenderer & {
-            __destinationCaptureCleanup?: () => void;
-          }
-        ).__destinationCaptureCleanup?.();
+    animationTimeRef.current +=
+      deltaSeconds
 
-        renderer.dispose();
+    /*
+     * Controls how quickly the
+     * chevrons travel.
+     */
+    const speed = 0.08
+
+    const travel =
+      animationTimeRef.current *
+      speed
+
+    // =========================================================
+    // CHEVRONS
+    // =========================================================
+
+    chevronsRef.current.forEach(
+      (chevron) => {
+        let progress =
+          chevron.userData.progress
+
+        progress =
+          (
+            progress +
+            travel
+          ) % 1
+
+        /*
+         * Keep chevron away from
+         * exact endpoints.
+         */
+        const t =
+          0.04 +
+          progress * 0.90
+
+        const position =
+          curve.getPointAt(
+            t
+          )
+
+        const tangent =
+          curve.getTangentAt(
+            t
+          )
+
+        chevron.position.copy(
+          position
+        )
+
+        chevron.position.y +=
+          0.12
+
+        /*
+         * Shape points toward +Z
+         * after X rotation.
+         */
+        const angle =
+          Math.atan2(
+            tangent.x,
+            tangent.z
+          )
+
+        chevron.rotation.set(
+          0,
+          angle,
+          0
+        )
+
+        /*
+         * Pulse opacity.
+         */
+        const pulse =
+          0.72 +
+          Math.sin(
+            animationTimeRef.current *
+              4 +
+              progress * 10
+          ) *
+            0.18
+
+        const material =
+          chevron.material
 
         if (
-          renderer.domElement.parentElement
+          material instanceof
+          THREE.MeshBasicMaterial
         ) {
-          renderer.domElement.parentElement.removeChild(
-            renderer.domElement
-          );
+          material.opacity =
+            pulse
         }
       }
+    )
+
+    // =========================================================
+    // DESTINATION PIN ANIMATION
+    // =========================================================
+
+    const marker =
+      destinationMarkerRef.current
+
+    if (marker) {
+      const pulse =
+        Math.sin(
+          animationTimeRef.current *
+            3
+        )
+
+      marker.scale.setScalar(
+        1 +
+          pulse * 0.035
+      )
+
+      const ring =
+        marker.children.find(
+          (child) =>
+            child instanceof
+            THREE.Mesh &&
+            child.geometry instanceof
+              THREE.RingGeometry
+        )
+
+      if (ring) {
+        const ringScale =
+          1 +
+          (
+            Math.sin(
+              animationTimeRef.current *
+                2
+            ) *
+            0.15
+          )
+
+        ring.scale.setScalar(
+          ringScale
+        )
+      }
+    }
+  }
+
+  // ===========================================================
+  // MAIN INITIALIZATION
+  // ===========================================================
+
+  useEffect(() => {
+    let disposed = false
+
+    let renderer:
+      THREE.WebGLRenderer | null = null
+
+    let scene:
+      THREE.Scene | null = null
+
+    let camera:
+      THREE.PerspectiveCamera | null = null
+
+    let adapter:
+      ThreeAdapter | null = null
+
+    let mapSpace:
+      MapSpace | null = null
+
+    let pathfinder:
+      NavMeshPathfinder | null = null
+
+    let navigation:
+      Navigation | null = null
+
+    let resizeHandler:
+      (() => void) | null = null
+
+    const init = async () => {
+      try {
+        // =====================================================
+        // CONTAINER
+        // =====================================================
+
+        if (!containerRef.current) {
+          throw new Error(
+            'AR container not available.'
+          )
+        }
+
+        // =====================================================
+        // WEBXR
+        // =====================================================
+
+        setStatus(
+          'Checking WebXR support...'
+        )
+
+        const supported =
+          await ThreeAdapter.isSupported()
+
+        if (!supported) {
+          throw new Error(
+            'WebXR immersive AR is not supported on this device.'
+          )
+        }
+
+        if (disposed) {
+          return
+        }
+
+        // =====================================================
+        // ENV
+        // =====================================================
+
+        const clientId =
+          process.env
+            .NEXT_PUBLIC_MULTISET_CLIENT_ID
+
+        const clientSecret =
+          process.env
+            .NEXT_PUBLIC_MULTISET_CLIENT_SECRET
+
+        const mapCode =
+          process.env
+            .NEXT_PUBLIC_MULTISET_MAP_CODE
+
+        if (
+          !clientId ||
+          !clientSecret ||
+          !mapCode
+        ) {
+          throw new Error(
+            'Missing MultiSet environment variables.'
+          )
+        }
+
+        // =====================================================
+        // MULTISET
+        // =====================================================
+
+        setStatus(
+          'Connecting to MultiSet...'
+        )
+
+        const client =
+          new MultisetClient({
+            clientId,
+            clientSecret,
+            mapType: 'map',
+            code: mapCode,
+          })
+
+        await client.authorize()
+
+        if (disposed) {
+          return
+        }
+
+        console.log(
+          '[Kokarya] MultiSet authorized'
+        )
+
+        // =====================================================
+        // RENDERER
+        // =====================================================
+
+        renderer =
+          new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true,
+          })
+
+        renderer.setPixelRatio(
+          Math.min(
+            window.devicePixelRatio,
+            2
+          )
+        )
+
+        renderer.setSize(
+          window.innerWidth,
+          window.innerHeight
+        )
+
+        renderer.xr.enabled =
+          true
+
+        renderer.setClearColor(
+          0x000000,
+          0
+        )
+
+        renderer.domElement.style.position =
+          'fixed'
+
+        renderer.domElement.style.left =
+          '0'
+
+        renderer.domElement.style.top =
+          '0'
+
+        renderer.domElement.style.width =
+          '100%'
+
+        renderer.domElement.style.height =
+          '100%'
+
+        renderer.domElement.style.zIndex =
+          '0'
+
+        containerRef.current.appendChild(
+          renderer.domElement
+        )
+
+        rendererRef.current =
+          renderer
+
+        // =====================================================
+        // SCENE
+        // =====================================================
+
+        scene =
+          new THREE.Scene()
+
+        scene.background = null
+
+        // =====================================================
+        // CAMERA
+        // =====================================================
+
+        camera =
+          new THREE.PerspectiveCamera(
+            70,
+            window.innerWidth /
+              window.innerHeight,
+            0.01,
+            1000
+          )
+
+        scene.add(
+          camera
+        )
+
+        // =====================================================
+        // LIGHT
+        // =====================================================
+
+        scene.add(
+          new THREE.AmbientLight(
+            0xffffff,
+            1
+          )
+        )
+
+        // =====================================================
+        // MAP SPACE
+        // =====================================================
+
+        mapSpace =
+          new MapSpace(
+            new THREE.Object3D()
+          )
+
+        mapSpaceRef.current =
+          mapSpace
+
+        scene.add(
+          mapSpace.object
+        )
+
+        // =====================================================
+        // NAVMESH
+        // =====================================================
+
+        setStatus(
+          'Loading NavMesh...'
+        )
+
+        const loader =
+          new GLTFLoader()
+
+        const gltf =
+          await loader.loadAsync(
+            '/navigation/kokarya-nav-mesh.glb'
+          )
+
+        if (disposed) {
+          return
+        }
+
+        const navMesh =
+          gltf.scene
+
+        mapSpace.object.add(
+          navMesh
+        )
+
+        navMesh.visible =
+          false
+
+        // =====================================================
+        // NAVMESH BOUNDS
+        // =====================================================
+
+        const bounds =
+          new THREE.Box3().setFromObject(
+            navMesh
+          )
+
+        console.log(
+          '[Kokarya] NavMesh center:',
+          bounds.getCenter(
+            new THREE.Vector3()
+          )
+        )
+
+        console.log(
+          '[Kokarya] NavMesh size:',
+          bounds.getSize(
+            new THREE.Vector3()
+          )
+        )
+
+        // =====================================================
+        // PATHFINDER
+        // =====================================================
+
+        setStatus(
+          'Creating NavMesh Pathfinder...'
+        )
+
+        pathfinder =
+          await NavMeshPathfinder.fromObject3D(
+            navMesh,
+            {
+              space:
+                mapSpace.object,
+            }
+          )
+
+        if (disposed) {
+          return
+        }
+
+        pathfinderRef.current =
+          pathfinder
+
+        setGroupCount(
+          pathfinder.groupCount
+        )
+
+        console.log(
+          '[Kokarya] NavMesh groups:',
+          pathfinder.groupCount
+        )
+
+        // =====================================================
+        // XR SESSION
+        // =====================================================
+
+        setStatus(
+          'Creating AR session...'
+        )
+
+        const session =
+          new XRSessionManager(
+            renderer.getContext() as WebGL2RenderingContext,
+            {
+              client,
+
+              autoLocalize: true,
+
+              onLocalizationFailure:
+                (reason) => {
+                  console.warn(
+                    '[Kokarya] Localization failed:',
+                    reason
+                  )
+
+                  setLocalized(
+                    false
+                  )
+
+                  setStatus(
+                    'Localization failed'
+                  )
+                },
+
+              onError:
+                (sessionError) => {
+                  console.error(
+                    '[Kokarya] XR error:',
+                    sessionError
+                  )
+
+                  setError(
+                    sessionError instanceof
+                      Error
+                      ? sessionError.message
+                      : String(
+                          sessionError
+                        )
+                  )
+                },
+            }
+          )
+
+        // =====================================================
+        // ADAPTER
+        // =====================================================
+
+        adapter =
+          new ThreeAdapter({
+            session,
+
+            renderer,
+
+            scene,
+
+            camera,
+
+            showMesh: false,
+
+            showGizmo: false,
+
+            onXRFrame:
+              ({
+                deltaSeconds,
+              }) => {
+                animateNavigation(
+                  deltaSeconds
+                )
+              },
+
+            onLocalizationSuccess:
+              (
+                result,
+                worldFromMap
+              ) => {
+                console.log(
+                  '[Kokarya] LOCALIZED'
+                )
+
+                console.log(
+                  '[Kokarya] Confidence:',
+                  result.localizeData.confidence
+                )
+
+                console.log(
+                  '[Kokarya] worldFromMap:',
+                  worldFromMap
+                )
+
+                setLocalized(
+                  true
+                )
+
+                setStatus(
+                  'Localized successfully!'
+                )
+              },
+          })
+
+        adapterRef.current =
+          adapter
+
+        // =====================================================
+        // MAP CONNECT
+        // =====================================================
+
+        mapSpace.connect(
+          adapter
+        )
+
+        console.log(
+          '[Kokarya] MapSpace connected'
+        )
+
+        // =====================================================
+        // NAVIGATION
+        // =====================================================
+
+        setStatus(
+          'Creating navigation...'
+        )
+
+        navigation =
+          await Navigation.create({
+            adapter,
+
+            mapSpace,
+
+            pathfinder,
+
+            pois:
+              DESTINATIONS,
+          })
+
+        if (disposed) {
+          return
+        }
+
+        navigationRef.current =
+          navigation
+
+        console.log(
+          '[Kokarya] Navigation created'
+        )
+
+        // =====================================================
+        // PATH UPDATED
+        // =====================================================
+
+        navigation.on(
+          'pathUpdated',
+          ({
+            corners,
+            remainingDistance,
+          }) => {
+            console.log(
+              '[Kokarya] PATH UPDATED',
+              corners
+            )
+
+            setDistance(
+              remainingDistance
+            )
+
+            if (
+              !navigationActiveRef.current
+            ) {
+              return
+            }
+
+            if (
+              corners.length < 2
+            ) {
+              clearRouteVisual()
+
+              setPathVisible(
+                false
+              )
+
+              return
+            }
+
+            createRouteVisual(
+              corners
+            )
+
+            setPathVisible(
+              true
+            )
+          }
+        )
+
+        // =====================================================
+        // ARRIVED
+        // =====================================================
+
+        navigation.on(
+          'arrived',
+          (poi) => {
+            console.log(
+              '[Kokarya] ARRIVED:',
+              poi.name
+            )
+
+            navigationActiveRef.current =
+              false
+
+            setIsNavigating(
+              false
+            )
+
+            setDistance(
+              0
+            )
+
+            setStatus(
+              `Arrived at ${poi.name}`
+            )
+
+            setPathVisible(
+              false
+            )
+
+            setArrivedMessage(
+              `You have arrived at ${poi.name}!`
+            )
+
+            /*
+             * Keep destination marker
+             * visible briefly.
+             */
+            setTimeout(() => {
+              if (!disposed) {
+                clearRouteVisual()
+
+                setArrivedMessage(
+                  ''
+                )
+              }
+            }, 3500)
+          }
+        )
+
+        // =====================================================
+        // UNREACHABLE
+        // =====================================================
+
+        navigation.on(
+          'unreachable',
+          (poi) => {
+            console.warn(
+              '[Kokarya] UNREACHABLE:',
+              poi.name
+            )
+
+            navigationActiveRef.current =
+              false
+
+            setIsNavigating(
+              false
+            )
+
+            setStatus(
+              `No route to ${poi.name}`
+            )
+
+            setPathVisible(
+              false
+            )
+
+            clearRouteVisual()
+          }
+        )
+
+        // =====================================================
+        // INITIALIZE
+        // =====================================================
+
+        await adapter.initialize()
+
+        if (disposed) {
+          return
+        }
+
+        setStatus(
+          'Ready — localizing...'
+        )
+
+        console.log(
+          '[Kokarya] Ready'
+        )
+
+        // =====================================================
+        // RESIZE
+        // =====================================================
+
+        resizeHandler =
+          () => {
+            if (
+              !renderer ||
+              !camera
+            ) {
+              return
+            }
+
+            camera.aspect =
+              window.innerWidth /
+              window.innerHeight
+
+            camera.updateProjectionMatrix()
+
+            renderer.setSize(
+              window.innerWidth,
+              window.innerHeight
+            )
+          }
+
+        window.addEventListener(
+          'resize',
+          resizeHandler
+        )
+      } catch (err) {
+        console.error(
+          '[Kokarya] Initialization error:',
+          err
+        )
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : String(err)
+        )
+
+        setStatus(
+          'Initialization failed'
+        )
+      }
+    }
+
+    init()
+
+    // =========================================================
+    // CLEANUP
+    // =========================================================
+
+    return () => {
+      disposed = true
+
+      navigationActiveRef.current =
+        false
+
+      if (resizeHandler) {
+        window.removeEventListener(
+          'resize',
+          resizeHandler
+        )
+      }
+
+      clearRouteVisual()
+
+      try {
+        adapter?.dispose()
+      } catch {}
+
+      try {
+        pathfinder?.dispose()
+      } catch {}
+
+      try {
+        mapSpace?.dispose()
+      } catch {}
+
+      if (
+        renderer &&
+        renderer.domElement.parentElement
+      ) {
+        renderer.domElement.parentElement.removeChild(
+          renderer.domElement
+        )
+      }
+
+      renderer?.dispose()
+
+      navigationRef.current =
+        null
+
+      pathfinderRef.current =
+        null
+
+      mapSpaceRef.current =
+        null
+
+      adapterRef.current =
+        null
 
       rendererRef.current =
-        null;
+        null
+    }
+  }, [])
 
-      sceneRef.current =
-        null;
+  // ===========================================================
+  // START NAVIGATION
+  // ===========================================================
 
-      cameraRef.current =
-        null;
-    };
-  }, []);
+  const startNavigation = (
+    destination: Destination
+  ) => {
+    const navigation =
+      navigationRef.current
 
-  // =========================================================
+    if (!navigation) {
+      console.warn(
+        '[Kokarya] Navigation not ready'
+      )
+
+      return
+    }
+
+    if (!localized) {
+      setStatus(
+        'Please localize first'
+      )
+
+      return
+    }
+
+    console.log(
+      '[Kokarya] Starting navigation:',
+      destination.name
+    )
+
+    setSelectedDestination(
+      destination.id
+    )
+
+    setIsNavigating(
+      true
+    )
+
+    setShowTargets(
+      false
+    )
+
+    setArrivedMessage(
+      ''
+    )
+
+    navigationActiveRef.current =
+      true
+
+    setStatus(
+      `Navigating to ${destination.name}...`
+    )
+
+    /*
+     * Actual MultiSet navigation.
+     */
+    navigation.setDestination(
+      destination.id
+    )
+  }
+
+  // ===========================================================
+  // STOP NAVIGATION
+  // ===========================================================
+
+  const stopNavigation = () => {
+    console.log(
+      '[Kokarya] Navigation stopped'
+    )
+
+    /*
+     * We intentionally don't call an
+     * undocumented navigation.stop()
+     * method.
+     *
+     * Instead we stop rendering the
+     * navigation visual and ignore
+     * further path updates.
+     */
+    navigationActiveRef.current =
+      false
+
+    setIsNavigating(
+      false
+    )
+
+    setSelectedDestination(
+      ''
+    )
+
+    setDistance(
+      null
+    )
+
+    setPathVisible(
+      false
+    )
+
+    setStatus(
+      localized
+        ? 'Localized — choose a destination'
+        : 'Localizing...'
+    )
+
+    clearRouteVisual()
+
+    setShowTargets(
+      true
+    )
+  }
+
+  // ===========================================================
+  // SELECTED DESTINATION
+  // ===========================================================
+
+  const selectedDestinationObject =
+    DESTINATIONS.find(
+      (item) =>
+        item.id ===
+        selectedDestination
+    )
+
+  // ===========================================================
   // UI
-  // =========================================================
+  // ===========================================================
 
   return (
     <main
       style={{
-        position: "fixed",
+        position: 'fixed',
         inset: 0,
-        overflow: "hidden",
-
-        /**
-         * This is only the fallback
-         * background.
-         *
-         * The Three.js canvas itself
-         * is transparent.
-         */
-        background: "#000",
-
+        overflow: 'hidden',
+        background:
+          'transparent',
         fontFamily:
-          "Arial, sans-serif",
+          'Arial, sans-serif',
       }}
     >
       {/* =====================================================
-          AR / THREE.JS
-      ====================================================== */}
+          AR CANVAS
+      ===================================================== */}
 
       <div
         ref={containerRef}
         style={{
-          position: "absolute",
+          position: 'fixed',
           inset: 0,
-          zIndex: 0,
+          zIndex: 1,
+          pointerEvents:
+            'none',
         }}
       />
 
       {/* =====================================================
-          UI OVERLAY
-      ====================================================== */}
+          TOP NAVIGATION BAR
+      ===================================================== */}
 
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-
-          zIndex: 20,
-
+          position: 'fixed',
+          top: 18,
+          left: '50%',
+          transform:
+            'translateX(-50%)',
+          zIndex: 30,
           pointerEvents:
-            "none",
+            'none',
         }}
       >
-        {/* ===================================================
-            HEADER
-        ==================================================== */}
-
         <div
           style={{
-            position: "absolute",
-
-            top: 20,
-            left: 20,
-            right: 20,
-
-            padding: 18,
-
-            borderRadius: 18,
-
+            minWidth: 210,
+            padding:
+              '12px 18px',
+            borderRadius: 28,
             background:
-              "rgba(15,15,18,0.90)",
-
+              'rgba(15,15,18,0.86)',
             backdropFilter:
-              "blur(18px)",
-
-            color: "#fff",
-
-            pointerEvents:
-              "auto",
+              'blur(16px)',
+            WebkitBackdropFilter:
+              'blur(16px)',
+            border:
+              '1px solid rgba(255,255,255,0.14)',
+            color:
+              '#ffffff',
+            textAlign:
+              'center',
+            boxShadow:
+              '0 8px 30px rgba(0,0,0,0.25)',
           }}
         >
           <div
             style={{
-              fontSize: 22,
-              fontWeight: 700,
-              marginBottom: 8,
+              fontSize: 14,
+              fontWeight: 600,
             }}
           >
-            Destination Capture
+            {isNavigating &&
+            selectedDestinationObject
+              ? selectedDestinationObject.name
+              : 'Kokarya Full Map'}
+          </div>
+
+          {isNavigating &&
+            distance !== null && (
+              <div
+                style={{
+                  marginTop: 3,
+                  fontSize: 12,
+                  opacity: 0.7,
+                }}
+              >
+                {distance.toFixed(1)} m
+              </div>
+            )}
+        </div>
+      </div>
+
+      {/* =====================================================
+          LOCALIZATION STATUS
+      ===================================================== */}
+
+      <div
+        style={{
+          position: 'fixed',
+          top: 20,
+          left: 18,
+          zIndex: 30,
+          pointerEvents:
+            'none',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            padding:
+              '8px 12px',
+            borderRadius: 18,
+            background:
+              'rgba(15,15,18,0.72)',
+            backdropFilter:
+              'blur(12px)',
+            WebkitBackdropFilter:
+              'blur(12px)',
+            color:
+              localized
+                ? '#75ffae'
+                : '#ffd866',
+            fontSize: 12,
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius:
+                '50%',
+              background:
+                'currentColor',
+              boxShadow:
+                localized
+                  ? '0 0 10px rgba(117,255,174,0.9)'
+                  : 'none',
+            }}
+          />
+
+          {localized
+            ? 'Localized'
+            : 'Localizing'}
+        </div>
+      </div>
+
+      {/* =====================================================
+          SHOW TARGETS
+      ===================================================== */}
+
+      {isNavigating && (
+        <button
+          type="button"
+          onClick={() =>
+            setShowTargets(
+              (value) =>
+                !value
+            )
+          }
+          style={{
+            position: 'fixed',
+            top: 70,
+            left: '50%',
+            transform:
+              'translateX(-50%)',
+            zIndex: 40,
+            border:
+              '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 22,
+            padding:
+              '9px 15px',
+            background:
+              'rgba(15,15,18,0.82)',
+            backdropFilter:
+              'blur(12px)',
+            WebkitBackdropFilter:
+              'blur(12px)',
+            color:
+              '#ffffff',
+            fontSize: 12,
+            cursor:
+              'pointer',
+          }}
+        >
+          ☰{' '}
+          {showTargets
+            ? 'Hide Navigation Targets'
+            : 'Show Navigation Targets'}
+        </button>
+      )}
+
+      {/* =====================================================
+          DEBUG INFO
+      ===================================================== */}
+
+      {!isNavigating && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 70,
+            left: 18,
+            right: 18,
+            zIndex: 25,
+            padding:
+              '14px 16px',
+            borderRadius: 18,
+            background:
+              'rgba(15,15,18,0.78)',
+            backdropFilter:
+              'blur(14px)',
+            WebkitBackdropFilter:
+              'blur(14px)',
+            color:
+              '#ffffff',
+            pointerEvents:
+              'none',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 21,
+              fontWeight: 700,
+            }}
+          >
+            Kokarya Full Map
           </div>
 
           <div
             style={{
-              fontSize: 14,
-              color: "#aaa",
-              marginBottom: 10,
+              marginTop: 5,
+              fontSize: 13,
+              opacity: 0.75,
             }}
           >
             {status}
@@ -1042,475 +2053,218 @@ ${items}
 
           <div
             style={{
-              display: "flex",
-              gap: 14,
-              fontSize: 13,
-              flexWrap: "wrap",
+              marginTop: 5,
+              fontSize: 12,
+              opacity: 0.55,
             }}
           >
-            <span
-              style={{
-                color: localized
-                  ? "#4ade80"
-                  : "#aaa",
-              }}
-            >
-              ●{" "}
-              {localized
-                ? "Localized"
-                : "Not localized"}
-            </span>
-
-            {currentPosition && (
-              <span
-                style={{
-                  color: "#9ca3af",
-                }}
-              >
-                Position available
-              </span>
-            )}
+            NavMesh groups:{' '}
+            {groupCount ??
+              'loading...'}
           </div>
         </div>
+      )}
 
-        {/* ===================================================
-            BOTTOM PANEL
-        ==================================================== */}
+      {/* =====================================================
+          ERROR
+      ===================================================== */}
 
+      {error && (
         <div
           style={{
-            position: "absolute",
-
-            left: 20,
-            right: 20,
-            bottom: 20,
-
-            maxHeight:
-              "calc(100vh - 160px)",
-
-            overflowY: "auto",
-
-            padding: 18,
-
-            borderRadius: 20,
-
+            position: 'fixed',
+            top: 125,
+            left: 18,
+            right: 18,
+            zIndex: 50,
+            padding: 12,
+            borderRadius: 14,
             background:
-              "rgba(15,15,18,0.94)",
-
-            backdropFilter:
-              "blur(20px)",
-
-            color: "#fff",
-
-            pointerEvents:
-              "auto",
+              'rgba(80,0,0,0.86)',
+            color:
+              '#ffb5b5',
+            fontSize: 12,
+            wordBreak:
+              'break-word',
           }}
         >
-          {/* ===============================================
-              CURRENT POSITION
-          ================================================ */}
+          {error}
+        </div>
+      )}
 
+      {/* =====================================================
+          DESTINATION TARGETS
+      ===================================================== */}
+
+      {showTargets &&
+        !isNavigating && (
           <div
             style={{
-              marginBottom: 15,
+              position: 'fixed',
+              left: 14,
+              right: 14,
+              bottom: 24,
+              zIndex: 40,
+              display: 'flex',
+              gap: 9,
+              overflowX: 'auto',
+              padding:
+                '8px 2px',
+              pointerEvents:
+                'auto',
+              scrollbarWidth:
+                'none',
             }}
           >
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#888",
-                letterSpacing: 1,
-                marginBottom: 7,
-              }}
-            >
-              CURRENT MAP COORDINATE
-            </div>
-
-            {currentPosition ? (
-              <div
-                style={{
-                  display: "flex",
-                  gap: 18,
-                  flexWrap: "wrap",
-                  fontFamily:
-                    "monospace",
-                  fontSize: 14,
-                }}
-              >
-                <span>
-                  X:{" "}
-                  {currentPosition.x}
-                </span>
-
-                <span>
-                  Y:{" "}
-                  {currentPosition.y}
-                </span>
-
-                <span>
-                  Z:{" "}
-                  {currentPosition.z}
-                </span>
-              </div>
-            ) : (
-              <div
-                style={{
-                  color: "#777",
-                  fontSize: 14,
-                }}
-              >
-                Start AR and localize first.
-              </div>
-            )}
-          </div>
-
-          {/* ===============================================
-              DESTINATION INPUT
-          ================================================ */}
-
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              marginBottom: 16,
-            }}
-          >
-            <input
-              value={destinationName}
-              onChange={(event) =>
-                setDestinationName(
-                  event.target.value
-                )
-              }
-              onKeyDown={(event) => {
-                if (
-                  event.key ===
-                  "Enter"
-                ) {
-                  captureDestination();
-                }
-              }}
-              disabled={!localized}
-              placeholder="Destination name"
-              style={{
-                flex: 1,
-                minWidth: 0,
-
-                padding:
-                  "13px 14px",
-
-                borderRadius: 11,
-
-                border:
-                  "1px solid #444",
-
-                background: "#111",
-
-                color: "#fff",
-
-                fontSize: 15,
-
-                outline: "none",
-              }}
-            />
-
-            <button
-              type="button"
-              onClick={
-                captureDestination
-              }
-              disabled={!localized}
-              style={{
-                padding:
-                  "13px 16px",
-
-                border: "none",
-
-                borderRadius: 11,
-
-                background:
-                  localized
-                    ? "#00bfff"
-                    : "#444",
-
-                color: "#fff",
-
-                fontWeight: 700,
-
-                cursor:
-                  localized
-                    ? "pointer"
-                    : "not-allowed",
-
-                whiteSpace:
-                  "nowrap",
-              }}
-            >
-              Capture
-            </button>
-          </div>
-
-          {/* ===============================================
-              DESTINATION COUNT
-          ================================================ */}
-
-          {destinations.length >
-            0 && (
-            <div
-              style={{
-                display: "flex",
-
-                alignItems:
-                  "center",
-
-                justifyContent:
-                  "space-between",
-
-                marginBottom: 8,
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 700,
-                  fontSize: 14,
-                }}
-              >
-                Captured (
-                {
-                  destinations.length
-                }
-                )
-              </div>
-
-              <button
-                type="button"
-                onClick={
-                  clearAll
-                }
-                style={{
-                  border:
-                    "1px solid #444",
-
-                  borderRadius: 8,
-
-                  padding:
-                    "6px 10px",
-
-                  background:
-                    "transparent",
-
-                  color: "#aaa",
-
-                  cursor:
-                    "pointer",
-                }}
-              >
-                Clear All
-              </button>
-            </div>
-          )}
-
-          {/* ===============================================
-              DESTINATION LIST
-          ================================================ */}
-
-          {destinations.map(
-            (destination) => (
-              <div
-                key={
-                  destination.id
-                }
-                style={{
-                  display: "flex",
-
-                  alignItems:
-                    "center",
-
-                  justifyContent:
-                    "space-between",
-
-                  gap: 12,
-
-                  padding:
-                    "10px 12px",
-
-                  marginBottom: 6,
-
-                  borderRadius: 10,
-
-                  background: "#111",
-                }}
-              >
-                <div
-                  style={{
-                    minWidth: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      marginBottom: 3,
-                    }}
-                  >
-                    {
-                      destination.name
-                    }
-                  </div>
-
-                  <div
-                    style={{
-                      color: "#888",
-
-                      fontFamily:
-                        "monospace",
-
-                      fontSize: 11,
-                    }}
-                  >
-                    {
-                      destination
-                        .position
-                        .x
-                    }
-                    {"  "}
-                    {
-                      destination
-                        .position
-                        .y
-                    }
-                    {"  "}
-                    {
-                      destination
-                        .position
-                        .z
-                    }
-                  </div>
-                </div>
-
+            {DESTINATIONS.map(
+              (
+                destination
+              ) => (
                 <button
+                  key={
+                    destination.id
+                  }
                   type="button"
+                  disabled={
+                    !localized
+                  }
                   onClick={() =>
-                    deleteDestination(
-                      destination.id
+                    startNavigation(
+                      destination
                     )
                   }
                   style={{
-                    border:
-                      "none",
-
-                    background:
-                      "transparent",
-
-                    color:
-                      "#ff6b6b",
-
-                    cursor:
-                      "pointer",
-
                     flexShrink: 0,
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            )
-          )}
-
-          {/* ===============================================
-              GENERATED CODE
-          ================================================ */}
-
-          {destinations.length >
-            0 && (
-            <div
-              style={{
-                marginTop: 15,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-
-                  justifyContent:
-                    "space-between",
-
-                  alignItems:
-                    "center",
-
-                  marginBottom: 8,
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: 14,
-                  }}
-                >
-                  Copy-paste code
-                </div>
-
-                <button
-                  type="button"
-                  onClick={
-                    copyCode
-                  }
-                  style={{
-                    border: "none",
-
-                    borderRadius: 9,
-
                     padding:
-                      "8px 13px",
-
+                      '13px 18px',
+                    borderRadius:
+                      22,
+                    border:
+                      '1px solid rgba(255,255,255,0.2)',
                     background:
-                      "#00bfff",
-
-                    color: "#fff",
-
-                    fontWeight: 700,
-
+                      'rgba(15,15,18,0.86)',
+                    backdropFilter:
+                      'blur(14px)',
+                    WebkitBackdropFilter:
+                      'blur(14px)',
+                    color:
+                      '#ffffff',
+                    fontSize: 14,
+                    fontWeight: 500,
+                    opacity:
+                      localized
+                        ? 1
+                        : 0.45,
                     cursor:
-                      "pointer",
+                      localized
+                        ? 'pointer'
+                        : 'not-allowed',
                   }}
                 >
-                  Copy Code
+                  {destination.name}
                 </button>
-              </div>
+              )
+            )}
+          </div>
+        )}
 
-              <pre
-                style={{
-                  margin: 0,
+      {/* =====================================================
+          STOP NAVIGATION
+      ===================================================== */}
 
-                  padding: 15,
-
-                  borderRadius: 12,
-
-                  background:
-                    "#050505",
-
-                  color: "#9ff",
-
-                  fontFamily:
-                    "monospace",
-
-                  fontSize: 12,
-
-                  lineHeight: 1.55,
-
-                  overflowX:
-                    "auto",
-
-                  whiteSpace:
-                    "pre",
-                }}
-              >
-                {generatedCode}
-              </pre>
-            </div>
-          )}
+      {isNavigating && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 24,
+            zIndex: 50,
+            display: 'flex',
+            justifyContent:
+              'center',
+            pointerEvents:
+              'auto',
+          }}
+        >
+          <button
+            type="button"
+            onClick={
+              stopNavigation
+            }
+            style={{
+              padding:
+                '14px 25px',
+              borderRadius: 26,
+              border:
+                '1px solid rgba(255,255,255,0.2)',
+              background:
+                'rgba(15,15,18,0.88)',
+              backdropFilter:
+                'blur(16px)',
+              WebkitBackdropFilter:
+                'blur(16px)',
+              color:
+                '#ffffff',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor:
+                'pointer',
+              boxShadow:
+                '0 8px 30px rgba(0,0,0,0.28)',
+            }}
+          >
+            ✕&nbsp; Stop Navigation
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* =====================================================
+          ARRIVED TOAST
+      ===================================================== */}
+
+      {arrivedMessage && (
+        <div
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 95,
+            transform:
+              'translateX(-50%)',
+            zIndex: 60,
+            minWidth: 250,
+            padding:
+              '13px 18px',
+            borderRadius: 18,
+            background:
+              'rgba(15,15,18,0.9)',
+            backdropFilter:
+              'blur(16px)',
+            WebkitBackdropFilter:
+              'blur(16px)',
+            border:
+              '1px solid rgba(255,255,255,0.14)',
+            color:
+              '#ffffff',
+            textAlign:
+              'center',
+            fontSize: 14,
+            boxShadow:
+              '0 10px 35px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 18,
+              marginBottom: 4,
+            }}
+          >
+            ✓
+          </div>
+
+          {arrivedMessage}
+        </div>
+      )}
     </main>
-  );
+  )
 }
