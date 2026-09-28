@@ -147,7 +147,7 @@ export default function KokaryaFullMapPage() {
   // =========================================================
 
   const getTurnInstruction = (
-    corners: THREE.Vector3[]
+   corners: readonly THREE.Vector3[]
   ) => {
     if (corners.length < 3) {
       return {
