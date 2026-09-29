@@ -1436,7 +1436,7 @@ export default function KokaryaFullMapPage() {
 
         const gltf =
           await loader.loadAsync(
-            '/navigation/kokarya-nav-mesh.glb'
+            '/navigation/uttarahalli-final-glb.glb'
           )
 
         if (disposed) {
