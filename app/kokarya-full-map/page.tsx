@@ -961,7 +961,7 @@ export default function KokaryaFullMapPage() {
         scene.add(mapSpace.object)
 
         const loader = new GLTFLoader()
-        const gltf = await loader.loadAsync('/navigation/kokarya-nav-mesh.glb')
+        const gltf = await loader.loadAsync('/navigation/uttarahalli-final-glb.glb')
         if (disposed) return
 
         const navMesh = gltf.scene
@@ -1372,10 +1372,10 @@ export default function KokaryaFullMapPage() {
         <div className="flex items-center gap-2 rounded-full border border-white/15 bg-black/65 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-xl">
           <span
             className={`h-2 w-2 rounded-full ${localized
-                ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
-                : sessionActive
-                  ? 'bg-yellow-400'
-                  : 'bg-white/40'
+              ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
+              : sessionActive
+                ? 'bg-yellow-400'
+                : 'bg-white/40'
               }`}
           />
           {isNavigating && selectedDestinationObject
