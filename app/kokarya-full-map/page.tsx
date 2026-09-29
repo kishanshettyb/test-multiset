@@ -178,7 +178,7 @@ const ARROW_SCROLL_SPEED = 1.1
 const VOICE_COOLDOWN = 3000
 const VOICE_DISTANCE_MILESTONES = [5, 10, 20]
 
-const LOCALIZATION_TIMEOUT_MS = 8000
+const LOCALIZATION_TIMEOUT_MS = 3000
 
 // =============================================================
 // ARROW TEXTURE
@@ -380,19 +380,46 @@ export default function KokaryaFullMapPage() {
   // LOCALIZATION POLLER
   // ===========================================================
 
+  // const waitForLocalization = (
+  //   timeoutMs = LOCALIZATION_TIMEOUT_MS
+  // ): Promise<boolean> =>
+  //   new Promise((resolve) => {
+  //     const start = Date.now()
+  //     const check = () => {
+  //       if (localizedRef.current) return resolve(true)
+  //       if (Date.now() - start > timeoutMs) return resolve(false)
+  //       setTimeout(check, 120)
+  //     }
+  //     check()
+  //   })
   const waitForLocalization = (
     timeoutMs = LOCALIZATION_TIMEOUT_MS
   ): Promise<boolean> =>
     new Promise((resolve) => {
       const start = Date.now()
+
       const check = () => {
-        if (localizedRef.current) return resolve(true)
-        if (Date.now() - start > timeoutMs) return resolve(false)
+        const elapsed = Date.now() - start
+
+        console.log(
+          `[Kokarya] Localization check: ${elapsed}ms | localized=${localizedRef.current}`
+        )
+
+        if (localizedRef.current) {
+          console.log('[Kokarya] ✅ Localization detected')
+          return resolve(true)
+        }
+
+        if (elapsed > timeoutMs) {
+          console.error('[Kokarya] ❌ Localization timeout')
+          return resolve(false)
+        }
+
         setTimeout(check, 120)
       }
+
       check()
     })
-
   // ===========================================================
   // DESTINATION LABEL
   // ===========================================================
@@ -993,12 +1020,21 @@ export default function KokaryaFullMapPage() {
             autoLocalize: true,
             overlayRoot,
 
+            // onLocalizationFailure: (reason) => {
+            //   console.warn('[Kokarya] Localization failed:', reason)
+            //   setLocalized(false)
+            //   localizedRef.current = false
+            // },
             onLocalizationFailure: (reason) => {
-              console.warn('[Kokarya] Localization failed:', reason)
-              setLocalized(false)
-              localizedRef.current = false
-            },
+              console.error('[Kokarya] ❌ LOCALIZATION FAILED:', reason)
 
+              localizedRef.current = false
+              setLocalized(false)
+
+              setError(
+                `Localization failed: ${reason ?? 'Unknown localization error'}`
+              )
+            },
             onError: (sessionError) => {
               console.error('[Kokarya] XR error:', sessionError)
               setError(
