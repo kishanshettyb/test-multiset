@@ -49,12 +49,118 @@ type DirectionState = 'straight' | 'left' | 'right' | 'uturn' | 'none'
 // =============================================================
 
 const DESTINATIONS: Destination[] = [
-  { id: 'entrance',     name: 'Entrance',     position: new THREE.Vector3(-0.149, -0.543, 1.201) },
-  { id: 'pantry',       name: 'Pantry',       position: new THREE.Vector3(0.607, -0.493, 6.68)   },
-  { id: 'cabin-1',      name: 'Cabin 1',      position: new THREE.Vector3(4.758, -0.47, 1.897)   },
-  { id: 'cabin-2',      name: 'Cabin 2',      position: new THREE.Vector3(8.962, -0.488, 1.736)  },
-  { id: 'meeting-room', name: 'Meeting room', position: new THREE.Vector3(11.588, -0.468, 1.757) },
-]
+
+  {
+    id: 'cabin-2',
+    name: 'Cabin 2',
+    position: new THREE.Vector3(
+      -7.993,
+      -0.587,
+      -2.108
+    ),
+  },
+
+  {
+    id: 'cabin-1',
+    name: 'Cabin 1',
+    position: new THREE.Vector3(
+      -7.883,
+      -0.689,
+      1.642
+    ),
+  },
+
+  {
+    id: 'meeting-room',
+    name: 'Meeting room',
+    position: new THREE.Vector3(
+      -6.902,
+      -0.809,
+      5.77
+    ),
+  },
+
+  {
+    id: 'men-washroom',
+    name: 'Men washroom',
+    position: new THREE.Vector3(
+      -1.308,
+      -0.733,
+      5.901
+    ),
+  },
+
+  {
+    id: 'women-washroom',
+    name: 'Women washroom',
+    position: new THREE.Vector3(
+      -0.654,
+      -0.626,
+      7.272
+    ),
+  },
+
+  {
+    id: 'lobby',
+    name: 'Lobby',
+    position: new THREE.Vector3(
+      3.612,
+      -0.867,
+      4.142
+    ),
+  },
+
+  {
+    id: 'entrance-door',
+    name: 'Entrance door',
+    position: new THREE.Vector3(
+      5.603,
+      -0.839,
+      3.897
+    ),
+  },
+
+  {
+    id: 'cabin-3',
+    name: 'Cabin 3',
+    position: new THREE.Vector3(
+      6.659,
+      -1.062,
+      -5.447
+    ),
+  },
+
+  {
+    id: 'cabin-4',
+    name: 'Cabin 4',
+    position: new THREE.Vector3(
+      10.033,
+      -1.043,
+      -6.443
+    ),
+  },
+
+  {
+    id: 'cabin-5',
+    name: 'Cabin 5',
+    position: new THREE.Vector3(
+      7.735,
+      -1.18,
+      -5.194
+    ),
+  },
+
+  {
+    id: 'office-space',
+    name: 'Office space',
+    position: new THREE.Vector3(
+      0.344,
+      -1.861,
+      0.899
+    ),
+  }
+
+];
 
 // =============================================================
 // CONSTANTS
@@ -304,7 +410,7 @@ export default function KokaryaFullMapPage() {
 
     context.beginPath()
     if (typeof (context as any).roundRect === 'function') {
-      ;(context as any).roundRect(14, 14, 612, 152, 42)
+      ; (context as any).roundRect(14, 14, 612, 152, 42)
     } else {
       context.rect(14, 14, 612, 152)
     }
@@ -976,7 +1082,7 @@ export default function KokaryaFullMapPage() {
           setDirection('none')
           currentDirectionRef.current = 'none'
 
-          try { navigationRef.current?.stop() } catch {}
+          try { navigationRef.current?.stop() } catch { }
 
           setArrivedMessage(`You have arrived at ${poi.name}`)
           speak(`You have arrived at ${poi.name}.`, true)
@@ -997,7 +1103,7 @@ export default function KokaryaFullMapPage() {
           setIsNavigating(false)
           setDirection('none')
 
-          try { navigationRef.current?.stop() } catch {}
+          try { navigationRef.current?.stop() } catch { }
 
           speak(`There is no route to ${poi.name}.`, true)
           clearNavigationVisual()
@@ -1035,7 +1141,7 @@ export default function KokaryaFullMapPage() {
         window.removeEventListener('resize', resizeHandler)
       }
 
-      try { navigation?.stop() } catch {}
+      try { navigation?.stop() } catch { }
       clearNavigationVisual()
 
       if (ribbonMeshRef.current) {
@@ -1048,9 +1154,9 @@ export default function KokaryaFullMapPage() {
       arrowTextureRef.current?.dispose()
       arrowTextureRef.current = null
 
-      try { adapter?.dispose() } catch {}
-      try { pathfinder?.dispose() } catch {}
-      try { mapSpace?.dispose() } catch {}
+      try { adapter?.dispose() } catch { }
+      try { pathfinder?.dispose() } catch { }
+      try { mapSpace?.dispose() } catch { }
 
       if (renderer && renderer.domElement.parentElement) {
         renderer.domElement.parentElement.removeChild(renderer.domElement)
@@ -1107,7 +1213,7 @@ export default function KokaryaFullMapPage() {
       return
     }
 
-    try { navigation.stop() } catch {}
+    try { navigation.stop() } catch { }
 
     if (sessionActiveRef.current) {
       void beginNavigationAfterLocalization(navigation, destination)
@@ -1172,7 +1278,7 @@ export default function KokaryaFullMapPage() {
   const stopNavigation = () => {
     console.log('[Kokarya] Navigation stopped')
 
-    try { navigationRef.current?.stop() } catch {}
+    try { navigationRef.current?.stop() } catch { }
 
     navigationActiveRef.current = false
     setIsNavigating(false)
@@ -1265,13 +1371,12 @@ export default function KokaryaFullMapPage() {
       <div className="pointer-events-none fixed left-1/2 top-4 z-30 -translate-x-1/2">
         <div className="flex items-center gap-2 rounded-full border border-white/15 bg-black/65 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-xl">
           <span
-            className={`h-2 w-2 rounded-full ${
-              localized
+            className={`h-2 w-2 rounded-full ${localized
                 ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
                 : sessionActive
                   ? 'bg-yellow-400'
                   : 'bg-white/40'
-            }`}
+              }`}
           />
           {isNavigating && selectedDestinationObject
             ? selectedDestinationObject.name
