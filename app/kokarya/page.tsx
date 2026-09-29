@@ -47,23 +47,14 @@ type Destination = {
 // =============================================================
 
 const DESTINATIONS: Destination[] = [
-  {
-    id: 'entrance',
-    name: 'Entrance',
-    position: new THREE.Vector3(
-      -0.149,
-      -0.543,
-      1.201
-    ),
-  },
 
   {
-    id: 'pantry',
-    name: 'Pantry',
+    id: 'cabin-2',
+    name: 'Cabin 2',
     position: new THREE.Vector3(
-      0.607,
-      -0.493,
-      6.68
+      -7.993,
+      -0.587,
+      -2.108
     ),
   },
 
@@ -71,32 +62,103 @@ const DESTINATIONS: Destination[] = [
     id: 'cabin-1',
     name: 'Cabin 1',
     position: new THREE.Vector3(
-      4.758,
-      -0.47,
-      1.897
-    ),
-  },
-
-  {
-    id: 'cabin-2',
-    name: 'Cabin 2',
-    position: new THREE.Vector3(
-      8.962,
-      -0.488,
-      1.736
+      -7.883,
+      -0.689,
+      1.642
     ),
   },
 
   {
     id: 'meeting-room',
-    name: 'Meeting Room',
+    name: 'Meeting room',
     position: new THREE.Vector3(
-      11.588,
-      -0.468,
-      1.757
+      -6.902,
+      -0.809,
+      5.77
     ),
   },
-]
+
+  {
+    id: 'men-washroom',
+    name: 'Men washroom',
+    position: new THREE.Vector3(
+      -1.308,
+      -0.733,
+      5.901
+    ),
+  },
+
+  {
+    id: 'women-washroom',
+    name: 'Women washroom',
+    position: new THREE.Vector3(
+      -0.654,
+      -0.626,
+      7.272
+    ),
+  },
+
+  {
+    id: 'lobby',
+    name: 'Lobby',
+    position: new THREE.Vector3(
+      3.612,
+      -0.867,
+      4.142
+    ),
+  },
+
+  {
+    id: 'entrance-door',
+    name: 'Entrance door',
+    position: new THREE.Vector3(
+      5.603,
+      -0.839,
+      3.897
+    ),
+  },
+
+  {
+    id: 'cabin-3',
+    name: 'Cabin 3',
+    position: new THREE.Vector3(
+      6.659,
+      -1.062,
+      -5.447
+    ),
+  },
+
+  {
+    id: 'cabin-4',
+    name: 'Cabin 4',
+    position: new THREE.Vector3(
+      10.033,
+      -1.043,
+      -6.443
+    ),
+  },
+
+  {
+    id: 'cabin-5',
+    name: 'Cabin 5',
+    position: new THREE.Vector3(
+      7.735,
+      -1.18,
+      -5.194
+    ),
+  },
+
+  {
+    id: 'office-space',
+    name: 'Office space',
+    position: new THREE.Vector3(
+      0.344,
+      -1.861,
+      0.899
+    ),
+  }
+
+];
 
 // =============================================================
 // COMPONENT
@@ -1004,17 +1066,17 @@ export default function KokaryaFullMapPage() {
           1 +
           Math.sin(
             animationTimeRef.current *
-              4 +
-              progress *
-              10
+            4 +
+            progress *
+            10
           ) *
-            0.08
+          0.08
 
         const chevron =
           chevronGroup.userData
             .chevron as
-            | THREE.Line
-            | undefined
+          | THREE.Line
+          | undefined
 
         if (chevron) {
           chevron.scale.set(
@@ -1025,17 +1087,17 @@ export default function KokaryaFullMapPage() {
 
           const material =
             chevron.material as
-              THREE.LineBasicMaterial
+            THREE.LineBasicMaterial
 
           material.opacity =
             0.70 +
             Math.sin(
               animationTimeRef.current *
-                3 +
-                progress *
-                10
+              3 +
+              progress *
+              10
             ) *
-              0.18
+            0.18
         }
 
         // -----------------------------------------------------
@@ -1045,19 +1107,19 @@ export default function KokaryaFullMapPage() {
         const glow =
           chevronGroup.userData
             .glow as
-            | THREE.Line
-            | undefined
+          | THREE.Line
+          | undefined
 
         if (glow) {
           const glowPulse =
             1.15 +
             Math.sin(
               animationTimeRef.current *
-                4 +
-                progress *
-                10
+              4 +
+              progress *
+              10
             ) *
-              0.12
+            0.12
 
           glow.scale.set(
             glowPulse,
@@ -1067,20 +1129,20 @@ export default function KokaryaFullMapPage() {
 
           const glowMaterial =
             glow.material as
-              THREE.LineBasicMaterial
+            THREE.LineBasicMaterial
 
           glowMaterial.opacity =
             0.08 +
             (
               Math.sin(
                 animationTimeRef.current *
-                  4 +
-                  progress *
-                  10
+                4 +
+                progress *
+                10
               ) +
               1
             ) *
-              0.035
+            0.035
         }
       }
     )
@@ -1099,13 +1161,13 @@ export default function KokaryaFullMapPage() {
     const pulse =
       Math.sin(
         animationTimeRef.current *
-          3
+        3
       )
 
     marker.scale.setScalar(
       1 +
-        pulse *
-          0.035
+      pulse *
+      0.035
     )
 
     const ring =
@@ -1118,9 +1180,9 @@ export default function KokaryaFullMapPage() {
         1 +
         Math.sin(
           animationTimeRef.current *
-            2
+          2
         ) *
-          0.15
+        0.15
 
       ring.scale.setScalar(
         ringScale
@@ -1321,7 +1383,7 @@ export default function KokaryaFullMapPage() {
           new THREE.PerspectiveCamera(
             70,
             window.innerWidth /
-              window.innerHeight,
+            window.innerHeight,
             0.01,
             1000
           )
@@ -1501,8 +1563,8 @@ export default function KokaryaFullMapPage() {
                       Error
                       ? sessionError.message
                       : String(
-                          sessionError
-                        )
+                        sessionError
+                      )
                   )
                 },
             }
@@ -1862,15 +1924,15 @@ export default function KokaryaFullMapPage() {
 
       try {
         adapter?.dispose()
-      } catch {}
+      } catch { }
 
       try {
         pathfinder?.dispose()
-      } catch {}
+      } catch { }
 
       try {
         mapSpace?.dispose()
-      } catch {}
+      } catch { }
 
       if (
         renderer &&
@@ -2074,7 +2136,7 @@ export default function KokaryaFullMapPage() {
                     key={
                       destination.id
                     }
-                   
+
                   >
                     <Button
                       variant="outline"
@@ -2192,7 +2254,7 @@ export default function KokaryaFullMapPage() {
           "
         >
           {isNavigating &&
-          selectedDestinationObject ? (
+            selectedDestinationObject ? (
             <div
               className="
                 flex
@@ -2258,10 +2320,9 @@ export default function KokaryaFullMapPage() {
                   h-2
                   w-2
                   rounded-full
-                  ${
-                    localized
-                      ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]'
-                      : 'bg-yellow-400'
+                  ${localized
+                    ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]'
+                    : 'bg-yellow-400'
                   }
                 `}
               />

@@ -65,24 +65,16 @@ type DirectionState =
 // DESTINATIONS
 // =============================================================
 
+
 const DESTINATIONS: Destination[] = [
-  {
-    id: 'entrance',
-    name: 'Entrance',
-    position: new THREE.Vector3(
-      -0.149,
-      -0.543,
-      1.201
-    ),
-  },
 
   {
-    id: 'pantry',
-    name: 'Pantry',
+    id: 'cabin-2',
+    name: 'Cabin 2',
     position: new THREE.Vector3(
-      0.607,
-      -0.493,
-      6.68
+      -7.993,
+      -0.587,
+      -2.108
     ),
   },
 
@@ -90,19 +82,9 @@ const DESTINATIONS: Destination[] = [
     id: 'cabin-1',
     name: 'Cabin 1',
     position: new THREE.Vector3(
-      4.758,
-      -0.47,
-      1.897
-    ),
-  },
-
-  {
-    id: 'cabin-2',
-    name: 'Cabin 2',
-    position: new THREE.Vector3(
-      8.962,
-      -0.488,
-      1.736
+      -7.883,
+      -0.689,
+      1.642
     ),
   },
 
@@ -110,12 +92,93 @@ const DESTINATIONS: Destination[] = [
     id: 'meeting-room',
     name: 'Meeting room',
     position: new THREE.Vector3(
-      11.588,
-      -0.468,
-      1.757
+      -6.902,
+      -0.809,
+      5.77
     ),
   },
-]
+
+  {
+    id: 'men-washroom',
+    name: 'Men washroom',
+    position: new THREE.Vector3(
+      -1.308,
+      -0.733,
+      5.901
+    ),
+  },
+
+  {
+    id: 'women-washroom',
+    name: 'Women washroom',
+    position: new THREE.Vector3(
+      -0.654,
+      -0.626,
+      7.272
+    ),
+  },
+
+  {
+    id: 'lobby',
+    name: 'Lobby',
+    position: new THREE.Vector3(
+      3.612,
+      -0.867,
+      4.142
+    ),
+  },
+
+  {
+    id: 'entrance-door',
+    name: 'Entrance door',
+    position: new THREE.Vector3(
+      5.603,
+      -0.839,
+      3.897
+    ),
+  },
+
+  {
+    id: 'cabin-3',
+    name: 'Cabin 3',
+    position: new THREE.Vector3(
+      6.659,
+      -1.062,
+      -5.447
+    ),
+  },
+
+  {
+    id: 'cabin-4',
+    name: 'Cabin 4',
+    position: new THREE.Vector3(
+      10.033,
+      -1.043,
+      -6.443
+    ),
+  },
+
+  {
+    id: 'cabin-5',
+    name: 'Cabin 5',
+    position: new THREE.Vector3(
+      7.735,
+      -1.18,
+      -5.194
+    ),
+  },
+
+  {
+    id: 'office-space',
+    name: 'Office space',
+    position: new THREE.Vector3(
+      0.344,
+      -1.861,
+      0.899
+    ),
+  }
+
+];
 
 // =============================================================
 // CONSTANTS
